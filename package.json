@@ -1,0 +1,51 @@
+{
+  "name": "@digitalsubstrate/dsviper-database-tools",
+  "version": "0.1.0",
+  "description": "Definitions-directed document rewriting and database migration for Viper, in Node over @digitalsubstrate/dsviper — a 1:1 port of the Python dsviper-database-tools. Rebuild Base(A) into a fresh Base(B); the source stays as rollback.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "bin": {
+    "dsviper-database-migrate": "bin/database_migrate.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepublishOnly": "npm test"
+  },
+  "peerDependencies": {
+    "@digitalsubstrate/dsviper": ">=1.2.5"
+  },
+  "keywords": [
+    "dsviper",
+    "viper",
+    "migration",
+    "schema",
+    "database",
+    "rewrite",
+    "commit"
+  ],
+  "homepage": "https://github.com/digital-substrate/dsviper-node-database-tools#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/digital-substrate/dsviper-node-database-tools.git"
+  },
+  "bugs": {
+    "url": "https://github.com/digital-substrate/dsviper-node-database-tools/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}
