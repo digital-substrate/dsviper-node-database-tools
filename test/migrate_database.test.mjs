@@ -5,10 +5,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
-import { TransformationDirectives } from '../src/directives.mjs';
-import { DefinitionsTransformer } from '../src/rewrite.mjs';
-import { migrateDatabase } from '../src/migrate.mjs';
-import { verifyMigration } from '../src/verify.mjs';
+import { TransformationDirectives } from '../src/rewrite/index.mjs';
+import { DefinitionsRewriter } from '../src/rewrite/index.mjs';
+import * as migrateDatabase from '../src/migrate_database.mjs';
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
@@ -20,10 +19,10 @@ function struct(defs, name, fields) {
 }
 
 function migrate(srcDb, directives) {
-    const [transformer, targetDefs] = DefinitionsTransformer.fromDirectives(srcDb.definitions(), directives);
+    const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(srcDb.definitions(), directives);
     const tgtDb = V.Database.createInMemory();
     tgtDb.extendDefinitions(targetDefs.const());
-    const info = migrateDatabase(srcDb, transformer, tgtDb);
+    const info = migrateDatabase.migrate(srcDb, transformer, tgtDb);
     return { tgtDb, transformer, info };
 }
 
@@ -74,7 +73,9 @@ describe('migrateDatabase', () => {
         d.dropField(docT.representation(), 'old');                      // orphans the second blob
         const { tgtDb, transformer, info } = migrate(src, d);
 
-        assert.deepEqual(info, { documents: 1, dropped: 0, blobs: 2, orphansSwept: 1 });
+        // copy-on-reference: only the referenced (kept) blob is streamed — the dropped-field
+        // blob is never copied, so there is nothing to sweep (blobs=1, no orphansSwept).
+        assert.deepEqual(info, { documents: 1, dropped: 0, blobs: 1 });
 
         const tatt = tgtDb.definitions().attachments()[0];
         const tdoc = V.ValueStructure.cast(tgtDb.get(tatt, tgtDb.keys(tatt).at(0, false)).unwrap(false));
@@ -84,6 +85,6 @@ describe('migrateDatabase', () => {
         assert.deepEqual([...Buffer.from(tgtDb.blob(thumb).encoded())], [10, 20, 30, 40]);
         assert.equal([...tgtDb.blobIds()].length, 1);
 
-        assert.deepEqual(verifyMigration(src, transformer, tgtDb), { checked: 1, dropped: 0, referencedBlobs: 1 });
+        assert.deepEqual(migrateDatabase.verify(src, transformer, tgtDb), { checked: 1, dropped: 0, referencedBlobs: 1 });
     });
 });

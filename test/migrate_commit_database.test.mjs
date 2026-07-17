@@ -4,9 +4,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
-import { TransformationDirectives } from '../src/directives.mjs';
-import { DefinitionsTransformer, DropRecord } from '../src/rewrite.mjs';
-import { migrateCommitDatabase } from '../src/commit_migrate.mjs';
+import { TransformationDirectives } from '../src/rewrite/index.mjs';
+import { DefinitionsRewriter, Unrepresentable } from '../src/rewrite/index.mjs';
+import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
@@ -28,7 +28,7 @@ function snapshot(db, commitId, transformer) {
             if (doc.isNil()) continue;
             let val = doc.unwrap(false); let attLocal; let inst;
             if (transformer) {
-                try { val = transformer.value(val); } catch (e) { if (e instanceof DropRecord) continue; throw e; }
+                try { val = transformer.value(val); } catch (e) { if (e instanceof Unrepresentable) continue; throw e; }
                 attLocal = transformer.attachment(att).identifier().split('.').pop();
                 inst = transformer.value(key).instanceId().representation();
             } else {
@@ -56,10 +56,10 @@ function orderDb() {
     return { src, order };
 }
 function prove(src, directives, commits) {
-    const [transformer, targetDefs] = DefinitionsTransformer.fromDirectives(src.definitions(), directives);
+    const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
     const tgt = V.CommitDatabase.createInMemory();
     tgt.extendDefinitions(targetDefs.const());
-    const info = migrateCommitDatabase(src, transformer, tgt);
+    const info = migrateCommitDatabase.migrate(src, transformer, tgt);
     assert.equal(tgt.commitIds().length, src.commitIds().length);       // history preserved
     for (const c of commits)
         assert.deepEqual(snapshot(src, c, transformer), snapshot(tgt, info.remap[c.representation()]));
@@ -118,10 +118,10 @@ describe('CommitDatabase replay', () => {
 
         const d = new TransformationDirectives();
         d.renameField(ref.representation(), 'note', 'memo');
-        const [transformer, targetDefs] = DefinitionsTransformer.fromDirectives(src.definitions(), d);
+        const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), d);
         const tgt = V.CommitDatabase.createInMemory();
         tgt.extendDefinitions(targetDefs.const());
-        const remap = migrateCommitDatabase(src, transformer, tgt).remap;
+        const remap = migrateCommitDatabase.migrate(src, transformer, tgt).remap;
 
         const ag = V.CommitStateBuilder.state(tgt, remap[c2.representation()]).attachmentGetting();
         const tatt = tgt.definitions().attachments()[0];

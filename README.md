@@ -14,20 +14,25 @@ This package gives you:
 - **`TransformationDirectives`** — a *declarative* edit script (renames, shape changes,
   and the policies that govern lossy operations) — the model familiar from Django
   migrations, not a bespoke DSL.
-- **`DefinitionsTransformer`** — one **target-directed** engine that builds the target
+- **`DefinitionsRewriter`** — one **target-directed** engine that builds the target
   `Definitions` from your directives and rewrites any value from the source domain to
-  the target, spanning both families (renames *and* add / drop / reorder / retype).
-- **`runMigration` / `migrateDatabase`** — the read-old / write-new loop; pass
-  `{ verify: true }` to have the tool prove its own result.
-- **`runCommitMigration` / `migrateCommitDatabase`** — a `CommitDatabase` rebuilt by
+  the target, spanning both families (renames *and* add / drop / reorder / retype /
+  move / hook).
+- **`migrateDatabase`** — the silo-2 module (`.migrate` / `.verify` / `.dryRun` / `.run`):
+  the read-old / write-new loop with **copy-on-reference** blob streaming; pass
+  `{ verify: true }` to `.run` to have the tool prove its own result.
+- **`migrateCommitDatabase`** — the same surface for a `CommitDatabase`, rebuilt by
   faithful structural replay: every commit re-issued in topological order, history
-  preserved (merges included, since a merge only seeds the DAG linearization).
+  preserved (merges included). `.verify` proves the rebuild *opcode by opcode* plus the
+  DAG topology, not a re-materialised snapshot.
+- **`plan` / `formatPlan`** and **`DiagnosticSink` / `formatReport`** — static (schema-only)
+  and dynamic (real per-site loss) pre-flight reports.
 - **`bin/database_migrate.mjs`** — a command-line tool that loads a migration file,
   opens the source read-only, and writes a fresh target — dispatching on the source
   (`Database` or `CommitDatabase`).
 
-See **[ARCHITECTURE.md](ARCHITECTURE.md)** for how the rewrite works — the
-target-directed engine, the loss model, and the guarantees.
+See the **[migration guide](MIGRATION_GUIDE.md)** for how to *think* about a migration, and
+**[REWRITE.md](REWRITE.md)** for how the rewrite *works* and how to extend it (code-linked).
 
 ## Install
 
@@ -77,8 +82,8 @@ node bin/database_migrate.mjs migration_shop_v2.mjs old.db new.db --verify
 ```
 
 `old.db` is opened read-only and left intact; `new.db` is the rebuilt database.
-`--verify` proves the target is a faithful image (`Database` only), `--force` overwrites
-an existing target, `-v` prints the migration summary.
+`--verify` proves the target is a faithful image (both a `Database` and a `CommitDatabase`),
+`--force` overwrites an existing target, `-v` prints the migration summary.
 
 ## The directive surface
 
@@ -106,9 +111,12 @@ fields and cases are plain names. Renames and retypes name the field/case by its
 
 **Class A** operations (widen, add-with-default, drop, reorder, add-case) are total and
 apply automatically. **Class B** operations can lose information and carry a policy
-(below). Not expressible as a directive — deliberately: splitting or merging a type or
-field, re-parenting a concept, and cross-field derivations (these need custom code, not
-a declaration).
+(below). **Class C** is a custom hook you write (`transformField` / `transformType` /
+`addField(..., derive)`) — for a change no declarative directive expresses (a field split
+or merge, a value derived from siblings or another document). This table is the common
+surface; the full vocabulary (definition-level drops, namespace `moveType` / `moveAttachment`,
+`Vec`/`Mat` resize / transpose, `document*`, hooks) is covered by the
+[migration guide](MIGRATION_GUIDE.md).
 
 **Policies (no silent loss).** Every lossy operation is refused by default and must
 carry an explicit policy — checked *before* any data is touched:
@@ -127,33 +135,39 @@ document.
 
 ```js
 import dsviper from '@digitalsubstrate/dsviper';
-import { DefinitionsTransformer, migrateDatabase } from '@digitalsubstrate/dsviper-database-tools';
+import { DefinitionsRewriter, migrateDatabase } from '@digitalsubstrate/dsviper-database-tools';
 
 const { Database } = dsviper;
 
 const source = Database.open('old.db', true);   // read-only
 const directives = buildDirectives(source.definitions());
-const [transformer, targetDefs] =
-    DefinitionsTransformer.fromDirectives(source.definitions(), directives);
+const [rewriter, targetDefs] =
+    DefinitionsRewriter.fromDirectives(source.definitions(), directives);
 
 const target = Database.create('new.db');
 target.extendDefinitions(targetDefs.const());
-migrateDatabase(source, transformer, target);   // owns its own exclusive transaction
+migrateDatabase.migrate(source, rewriter, target);   // owns its own exclusive transaction
 ```
 
-`migrateDatabase` copies the referenced blob bytes, transforms every document, and
-reclaims any blob the schema change stranded. Pass `{ verify: true }` to `runMigration`
-(or call `verifyMigration`) to have the tool prove the target is a faithful image.
+`migrateDatabase.migrate` transforms every document and streams each referenced blob to
+the target as it is first needed (copy-on-reference — exactly the referenced blobs, never
+an orphan), in one exclusive transaction that rolls back on any failure. Call
+`migrateDatabase.verify` (or pass `{ verify: true }` to `.run`) to have the tool prove the
+target is a faithful image. `migrateCommitDatabase` mirrors this surface for a
+`CommitDatabase`.
 
 ## Status
 
-Alpha. The rewrite engine covers the full type / directive surface (all containers,
-`Vec`/`Mat`, `XArray`, the three key flavours); the `Database` loop copies blob bytes,
-reclaims stranded blobs, and verifies its own result; the `CommitDatabase` loop replays
-the whole commit DAG faithfully (history preserved, merges included, intra-DAG
-`commitId` remap) in one atomic transaction — all proven against the binding. The port
-also drove two additive binding fixes (`ValueXArray.items(encoded)`, `decodeVariant`
-short-circuiting a wrapped handle). Not yet built: `Vec`/`Mat` element widening, custom
-cross-field (Class-C) hooks, and a round-trip verifier for a `CommitDatabase`.
+Beta — feature-complete and self-verifying, at parity with Python `dsviper-database-tools`
+0.2.0. The rewrite engine covers the full type / directive surface — all containers,
+`Vec`/`Mat` (element conversion, resize, transpose, the `Vector` bridge), `XArray`, the
+three key flavours, variant arm-sets, definition-level drops, namespace split / merge, and
+Class-C hooks (cross-field, cross-document single-reference, aggregate). The `Database` loop
+copies exactly the referenced blob bytes (copy-on-reference) and verifies its own result;
+the `CommitDatabase` loop replays the whole commit DAG faithfully (history preserved, merges
+included) over the 10 opcode verbs, in one atomic transaction that rolls back on failure, and
+verifies itself *opcode by opcode* plus the DAG topology. The port also drove additive binding
+fixes, found by exercising the `encoded=false` typed-value path. Validated by the test suite
+(`npm test`).
 
 Requires `@digitalsubstrate/dsviper` >= 1.2.5.

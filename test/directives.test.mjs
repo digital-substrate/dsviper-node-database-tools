@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
-import { TransformationDirectives } from '../src/directives.mjs';
+import { TransformationDirectives } from '../src/rewrite/index.mjs';
 
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 

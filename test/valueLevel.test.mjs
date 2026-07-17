@@ -4,8 +4,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
-import { TransformationDirectives } from '../src/directives.mjs';
-import { DefinitionsTransformer } from '../src/rewrite.mjs';
+import { TransformationDirectives } from '../src/rewrite/index.mjs';
+import { DefinitionsRewriter } from '../src/rewrite/index.mjs';
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
@@ -32,7 +32,7 @@ describe('key flavours preserved under a concept rename', () => {
         src.createMembership(club, concept);
         const d = new TransformationDirectives();
         d.renameType('Demo::MaterialStandard', 'Demo::StandardMaterial');
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         return { concept, club, tr };
     };
     it('concept key preserved + remapped', () => {
@@ -59,7 +59,7 @@ describe('Any / Tuple / Variant', () => {
         const s = struct(src, 'Payload', [['keep', T.INT32], ['legacy', T.STRING]]);
         const d = new TransformationDirectives();
         d.dropField(s.representation(), 'legacy');
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const out = tr.value(new V.ValueAny(new V.ValueStructure(s, { keep: 7, legacy: 'gone' })));
         const inner = V.ValueStructure.cast(V.ValueAny.cast(out).unwrap(false));
         assert.deepEqual(inner.typeStructure().fields().map((f) => f.name()), ['keep']);
@@ -73,7 +73,7 @@ describe('Any / Tuple / Variant', () => {
             ['var', new V.TypeVariant([T.INT32, sEl])]]);
         const d = new TransformationDirectives();
         d.renameField(sEl.representation(), 'x', 'xx');
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const tup = new V.ValueTuple(new V.TypeTuple([T.INT32, sEl]), [5, new V.ValueStructure(sEl, { x: 7 })]);
         const varr = new V.ValueVariant(new V.TypeVariant([T.INT32, sEl]));
         varr.wrap(new V.ValueStructure(sEl, { x: 9 }), sEl);
@@ -93,7 +93,7 @@ describe('XArray + Set collapse + enum', () => {
         const s = struct(src, 'R', [['nodes', new V.TypeXArray(sEl)]]);
         const d = new TransformationDirectives();
         d.renameField(sEl.representation(), 'v', 'val');
-        const [tr, target] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr, target] = DefinitionsRewriter.fromDirectives(src, d);
         const xa = new V.ValueXArray(new V.TypeXArray(sEl));
         xa.insert(V.ValueXArray.END, new V.ValueStructure(sEl, { v: 10 }), V.ValueXArray.createPosition());
         const p1 = xa.insert(V.ValueXArray.END, new V.ValueStructure(sEl, { v: 20 }), V.ValueXArray.createPosition());
@@ -114,7 +114,7 @@ describe('XArray + Set collapse + enum', () => {
             const d = new TransformationDirectives();
             d.removeCase(e.representation(), 'Old', ['map-case', 'New']);
             if (winner) d.resolveCollisions(winner);
-            const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+            const [tr] = DefinitionsRewriter.fromDirectives(src, d);
             const st = new V.ValueSet(new V.TypeSet(e));
             st.add(new V.ValueEnumeration(e, 'Old'));
             st.add(new V.ValueEnumeration(e, 'New'));
@@ -137,7 +137,7 @@ describe('XArray + Set collapse + enum', () => {
         const d = new TransformationDirectives();
         d.addCase(e.representation(), 'D');
         d.reorderCases(e.representation(), ['D', 'C', 'A', 'B']);
-        const [tr, target] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr, target] = DefinitionsRewriter.fromDirectives(src, d);
         assert.deepEqual(target.const().enumerations()[0].cases().map((c) => c.name()), ['D', 'C', 'A', 'B']);
         const back = V.ValueStructure.cast(rt(tr, target, tr.value(new V.ValueStructure(s, { m: new V.ValueEnumeration(e, 'A') })), s));
         assert.equal(V.ValueEnumeration.cast(back.at('m', false)).name(), 'A');

@@ -4,8 +4,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
-import { TransformationDirectives } from '../src/directives.mjs';
-import { DefinitionsTransformer, DropRecord } from '../src/rewrite.mjs';
+import { TransformationDirectives } from '../src/rewrite/index.mjs';
+import { DefinitionsRewriter, Unrepresentable } from '../src/rewrite/index.mjs';
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
@@ -24,7 +24,7 @@ describe('family 2 — numeric leaf algebra', () => {
         const s = struct(src, 'M', [['n', T.INT32]]);
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'n', T.INT64);            // widening -> automatic
-        const [tr, target] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr, target] = DefinitionsRewriter.fromDirectives(src, d);
         const back = V.ValueStructure.cast(rt(tr, target, tr.value(new V.ValueStructure(s, { n: 2147483647 })), s));
         assert.equal(back.at('n'), 2147483647n);                   // int64 native = bigint
     });
@@ -34,7 +34,7 @@ describe('family 2 — numeric leaf algebra', () => {
         const s = struct(src, 'W', [['n', T.INT64]]);
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'n', T.INT32, policy);
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         return [tr, s];
     };
     it('narrowing fail in range -> exact', () => {
@@ -58,14 +58,14 @@ describe('family 2 — numeric leaf algebra', () => {
         const s = struct(src, 'R', [['n', T.INT32]]);
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'n', T.STRING);           // X->string: Class A
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         assert.equal(tr.value(new V.ValueStructure(s, { n: 42 })).at('n'), '42');
 
         const src2 = new V.Definitions();
         const s2 = struct(src2, 'R', [['n', T.STRING]]);
         const d2 = new TransformationDirectives();
         d2.retypeField(s2.representation(), 'n', T.INT32, ['default', new V.ValueInt32(-1)]);
-        const [tr2] = DefinitionsTransformer.fromDirectives(src2, d2);
+        const [tr2] = DefinitionsRewriter.fromDirectives(src2, d2);
         assert.equal(tr2.value(new V.ValueStructure(s2, { n: '7' })).at('n'), 7);
         assert.equal(tr2.value(new V.ValueStructure(s2, { n: 'abc' })).at('n'), -1);
     });
@@ -78,7 +78,7 @@ describe('family 2 — structural', () => {
         const d = new TransformationDirectives();
         d.addField(s.representation(), 'b', new V.ValueString('default-b'));
         d.dropField(s.representation(), 'legacy');
-        const [tr, target] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr, target] = DefinitionsRewriter.fromDirectives(src, d);
         const back = V.ValueStructure.cast(rt(tr, target, tr.value(new V.ValueStructure(s, { a: 1, legacy: 'z' })), s));
         assert.equal(back.at('a'), 1);
         assert.equal(back.at('b'), 'default-b');
@@ -91,14 +91,14 @@ describe('family 2 — structural', () => {
         const s = struct(src, 'R', [['x', ot]]);
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'x', T.INT32, ['default', new V.ValueInt32(0)]);
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         assert.equal(tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot, 9) })).at('x'), 9);
         assert.equal(tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot) })).at('x'), 0);
 
         const d2 = new TransformationDirectives();
         d2.retypeField(s.representation(), 'x', T.INT32, 'drop-record');
-        const [tr2] = DefinitionsTransformer.fromDirectives(src, d2);
-        assert.throws(() => tr2.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot) })), DropRecord);
+        const [tr2] = DefinitionsRewriter.fromDirectives(src, d2);
+        assert.throws(() => tr2.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot) })), Unrepresentable);
     });
 
     it('vector -> set collapse; map key collision winner', () => {
@@ -106,7 +106,7 @@ describe('family 2 — structural', () => {
         const s = struct(src, 'R', [['tags', new V.TypeVector(T.INT32)]]);
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'tags', new V.TypeSet(T.INT32), 'collapse');
-        const [tr] = DefinitionsTransformer.fromDirectives(src, d);
+        const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const vec = new V.ValueVector(new V.TypeVector(T.INT32));
         for (const x of [1, 2, 2, 3, 3, 3]) vec.append(x);
         const out = tr.value(new V.ValueStructure(s, { tags: vec }));

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0] - 2026-07-17
+
+Beta. Brings the Node port to full parity with Python `dsviper-database-tools` 0.2.0 — the
+engine and both migration loops are feature-complete and self-verifying.
+
+- **Engine** (`DefinitionsRewriter`, renamed from `DefinitionsTransformer`; `Unrepresentable`,
+  renamed from `DropRecord`) — the full type / directive surface: renames, shape changes, retypes
+  (leaf, all container elements, `Vec`/`Mat` element + dimension, the `Vector` bridge, variant
+  arm-sets), definition-level drops, namespace split / merge, and Class-C hooks (cross-field,
+  cross-document single-reference, aggregate). Total-or-explicit-refusal throughout.
+- **`migrateDatabase`** — now a silo module (`.migrate` / `.verify` / `.dryRun` / `.run`): one
+  exclusive transaction, **copy-on-reference** blob streaming (no orphan sweep), a source
+  snapshot, `onProgress`, and a self-`verify`; rolls back and discards a partial target on any
+  failure. Adds `dryRun` (the *inform* preview), `plan` / `formatPlan` (the static *identify*
+  report), and `DiagnosticSink` / `formatReport` (dynamic per-site loss).
+- **`migrateCommitDatabase`** — the same surface, with an **opcode-level `verify`** (each opcode's
+  rewrite + the DAG topology, not a re-materialised snapshot), a `dryRun`, and progress.
+  `dropAttachment` is admissible; record-scoped loss (`drop-record`) is refused. The `--verify`
+  CLI flag now covers it.
+- **Layout & docs** — the engine kernel is now a sub-package (`src/rewrite/`); `ARCHITECTURE.md`
+  retired, replaced by a [migration guide](MIGRATION_GUIDE.md) (user) and
+  [REWRITE.md](REWRITE.md) (maintainer, code-linked).
+
+Requires `@digitalsubstrate/dsviper >= 1.2.5`.
+
 ## [0.1.0] - 2026-07-13
 
 First cut. A 1:1 Node port of the Python `dsviper-database-tools`, in pure Node over

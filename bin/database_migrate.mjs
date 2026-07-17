@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Migrate a Viper Database or CommitDatabase under a transformed schema. Reads the
-// source read-only and writes a fresh target — a rebuild, never an in-place ALTER; the
-// source is kept as rollback. A CommitDatabase is replayed faithfully (history
-// preserved). The schema change is a migration file exporting
-// `buildDirectives(sourceDefs) -> TransformationDirectives`. Port of the Python CLI.
+// Migrate a Viper Database or CommitDatabase under a transformed schema. Reads the source
+// read-only and writes a fresh target — a rebuild, never an in-place ALTER; the source is kept
+// as rollback. A CommitDatabase is replayed faithfully (history preserved). The schema change is
+// a migration file exporting buildDirectives(sourceDefs) -> TransformationDirectives. A 1:1 port
+// of the Python CLI.
 //
 //     node bin/database_migrate.mjs migration.mjs old.db new.db --verify
 
@@ -13,8 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import V from '../src/dsviper.mjs';
-import { runMigration } from '../src/migrate.mjs';
-import { runCommitMigration } from '../src/commit_migrate.mjs';
+import * as migrateDatabase from '../src/migrate_database.mjs';
+import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
 
 async function loadBuildDirectives(file) {
     const mod = await import(pathToFileURL(path.resolve(file)).href);
@@ -54,10 +54,9 @@ async function main() {
     const buildDirectives = await loadBuildDirectives(migration);
     let info;
     if (V.CommitDatabase.isCompatible(source)) {
-        if (values.verify) console.error('note: --verify is not yet supported for a CommitDatabase (ignored).');
-        info = runCommitMigration(source, buildDirectives, target);
+        info = migrateCommitDatabase.run(source, buildDirectives, target, { verify: values.verify });
     } else if (V.Database.isCompatible(source)) {
-        info = runMigration(source, buildDirectives, target, { verify: values.verify });
+        info = migrateDatabase.run(source, buildDirectives, target, { verify: values.verify });
     } else {
         console.error(`Not a dsviper Database or CommitDatabase: ${source}`);
         process.exit(1);
