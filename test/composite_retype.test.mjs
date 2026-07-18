@@ -63,6 +63,15 @@ describe('Optional / Tuple element retype', () => {
         assert.equal(out2.at('f', false).at(1, true), 'b');
     });
 
+    it('tuple arity change is refused at value time', () => {
+        // policy only clears the build-time policy gate; the value-time guard then refuses the
+        // arity change itself (a tuple conversion is per-position — it cannot add/drop positions).
+        const [rw, s] = mk(new V.TypeTuple([T.INT32, T.STRING]), new V.TypeTuple([T.INT32]), 'saturate');  // 2 -> 1
+        assert.throws(() => rw.value(new V.ValueStructure(s, {
+            f: new V.ValueTuple(new V.TypeTuple([T.INT32, T.STRING]), [V.Value.create(T.INT32, 5), new V.ValueString('a')]),
+        })), /arity/);
+    });
+
     it('nested vector<optional<int64>> narrow policied, nil preserved', () => {
         const O64 = new V.TypeOptional(T.INT64); const O32 = new V.TypeOptional(T.INT32);
         const [rw, s] = mk(new V.TypeVector(O64), new V.TypeVector(O32), 'saturate');

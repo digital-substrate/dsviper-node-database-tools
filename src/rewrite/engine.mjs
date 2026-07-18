@@ -386,17 +386,16 @@ export class DefinitionsRewriter {
         return this.value(elem, te, esite);
     }
 
-    // -- add a converted element to a target set, guarding a non-injective collapse under
-    //    collisionPolicy. Shared by `value` and `_retype`. (ValueSet has no contains(); a `seen`
-    //    Set of representations tracks membership.)
-    _setAdd(out, ne, seen, site) {
-        if (seen.has(ne.representation())) {                       // Class B: element collapse
+    // -- add a converted element to a target set, guarding a non-injective collapse (two source
+    //    elements mapping to one member) under collisionPolicy — shared by `value` and `_retype`.
+    _setAdd(out, ne, site) {
+        if (out.contains(ne)) {                                    // Class B: element collapse
             if (this.d.collisionPolicy === 'fail')
                 throw new Error(`[Class-B] set element collapse: ${ne.representation()} — a non-injective element migration would silently drop a member; decree resolveCollisions('first'|'last')`);
             this._emit('set-collapse', site, this.d.collisionPolicy, ne, null);
             return;                                                // first/last both = collapse to one
         }
-        seen.add(ne.representation()); out.add(ne);
+        out.add(ne);
     }
 
     // -- set a converted (key, value) into a target map, guarding a key collision under
@@ -410,6 +409,70 @@ export class DefinitionsRewriter {
         } else {
             out.set(nk, nv);
         }
+    }
+
+    // -- the SINGLE container/holder traversal — the one place that knows the container/holder
+    //    kinds (optional / vector / set / map / xarray / tuple). Rebuilds `tt` by applying
+    //    `elemFn(element, elementType, site) -> converted` to each element. `elemFn` is either
+    //    `value`'s type-preserving recurse or `_retype`'s policied `_retypeElement`; sharing one
+    //    loop keeps the two from drifting (the very drift that opened the earlier Optional/Tuple
+    //    gap — value() had them, _retype()'s hand-kept copy did not). Set-collapse / map-collision
+    //    are guarded here, uniformly for both callers. Returns null if `tt` is not one of the six
+    //    (the caller handles struct / key / any / enum / variant / commit_id / leaf). Vec/Mat are
+    //    NOT here (numeric, cell-addressed, retype-only) nor is variant (arm-set semantics).
+    _mapElements(v, tt, elemFn, site) {
+        const tc = tt.typeCode();
+        if (tc === 'optional') {
+            const vo = V.ValueOptional.cast(v);
+            if (vo.isNil()) return new V.ValueOptional(tt);
+            const et = V.TypeOptional.cast(tt).elementType();
+            return new V.ValueOptional(tt, elemFn(vo.unwrap(false), et, site));
+        }
+        if (tc === 'vector') {
+            const vv = V.ValueVector.cast(v);
+            const et = V.TypeVector.cast(tt).elementType();
+            const out = new V.ValueVector(tt);
+            const esite = this._sub(site, '[]');
+            for (let i = 0; i < vv.size(); i++) out.append(elemFn(vv.at(i, false), et, esite));
+            return out;
+        }
+        if (tc === 'set') {
+            const vs = V.ValueSet.cast(v);
+            const et = V.TypeSet.cast(tt).elementType();
+            const out = new V.ValueSet(tt);
+            const esite = this._sub(site, '{}');
+            for (let i = 0; i < vs.size(); i++) this._setAdd(out, elemFn(vs.at(i, false), et, esite), site);
+            return out;
+        }
+        if (tc === 'map') {
+            const mt = V.TypeMap.cast(tt); const kt = mt.keyType(); const et = mt.elementType();
+            const vm = V.ValueMap.cast(v);
+            const out = new V.ValueMap(tt);
+            const ksite = this._sub(site, '<key>'); const vsite = this._sub(site, '<val>');
+            for (const [k, val] of vm.items(false))
+                this._mapSet(out, elemFn(k, kt, ksite), elemFn(val, et, vsite), site);
+            return out;
+        }
+        if (tc === 'xarray') {
+            // ATOMIC: the source layout (positions + tombstones) is copied opaquely inside
+            // rebuildFrom, and the re-mapped elements are installed in the SAME step.
+            const vx = V.ValueXArray.cast(v);
+            const et = V.TypeXArray.cast(tt).elementType();
+            const esite = this._sub(site, '[]');
+            const out = new V.ValueXArray(tt);
+            out.rebuildFrom(vx, vx.items(false).map(([pos, val]) => [pos, elemFn(val, et, esite)]));
+            return out;
+        }
+        if (tc === 'tuple') {
+            const vt = V.ValueTuple.cast(v);
+            const ets = V.TypeTuple.cast(tt).types();
+            if (vt.size() !== ets.length)                             // a tuple conversion is per-position;
+                throw new Error(`[unsupported] tuple arity change ${vt.size()}->${ets.length} — a tuple conversion must preserve arity (it is a per-position element conversion)`);
+            const parts = [];
+            for (let i = 0; i < vt.size(); i++) parts.push(elemFn(vt.at(i, false), ets[i], this._sub(site, `.${i}`)));
+            return new V.ValueTuple(tt, parts);
+        }
+        return null;
     }
 
     // -- retype dispatcher: structural (unwrap, Vector<->Set, the Vector bridge, variant arm-set,
@@ -428,21 +491,6 @@ export class DefinitionsRewriter {
             const inner = vo.unwrap(false);
             if (inner.typeCode() === tc) return this.value(inner, tt, site);
             return this._retype(inner, tt, policy, site);
-        }
-        if (sc === 'optional' && tc === 'optional') {                 // Optional<A> -> Optional<B>: element
-            const vo = V.ValueOptional.cast(sv);                      // retype, nil-preserving (a nil holds
-            if (vo.isNil()) return new V.ValueOptional(tt);          // no element to convert). The inner A->B
-            const et = V.TypeOptional.cast(tt).elementType();        // rides _retypeElement — a leaf narrow
-            return new V.ValueOptional(tt, this._retypeElement(vo.unwrap(false), et, policy, site));   // is policied.
-        }
-        if (sc === 'tuple' && tc === 'tuple') {                        // Tuple<...> -> Tuple<...>: per-position
-            const vt = V.ValueTuple.cast(sv);                         // element retype at fixed arity.
-            const ets = V.TypeTuple.cast(tt).types();
-            if (vt.size() !== ets.length)
-                throw new Error(`[unsupported] tuple arity change ${vt.size()}->${ets.length} — a tuple retype must preserve arity (it is a per-position element conversion)`);
-            const parts = [];
-            for (let i = 0; i < ets.length; i++) parts.push(this._retypeElement(vt.at(i, false), ets[i], policy, this._sub(site, `.${i}`)));
-            return new V.ValueTuple(tt, parts);
         }
         if (sc === 'vector' && tc === 'set') {                        // Vector -> Set (collapse: the
             const et = V.TypeSet.cast(tt).elementType();              // set dedups silently — that is
@@ -539,38 +587,17 @@ export class DefinitionsRewriter {
             return out;
         }
 
-        // container element retype (same container kind, element type widen A / narrow B) — the
-        // retype twin of value()'s container branches.
-        if (sc === 'vector' && tc === 'vector') {
-            const te = V.TypeVector.cast(tt).elementType();
-            const vv = V.ValueVector.cast(sv); const out = new V.ValueVector(tt);
-            const esite = this._sub(site, '[]');
-            for (let i = 0; i < vv.size(); i++) out.append(this._retypeElement(vv.at(i, false), te, policy, esite));
-            return out;
-        }
-        if (sc === 'set' && tc === 'set') {
-            const te = V.TypeSet.cast(tt).elementType();
-            const vs = V.ValueSet.cast(sv); const out = new V.ValueSet(tt); const seen = new Set();
-            const esite = this._sub(site, '{}');
-            for (let i = 0; i < vs.size(); i++)
-                this._setAdd(out, this._retypeElement(vs.at(i, false), te, policy, esite), seen, site);
-            return out;
-        }
-        if (sc === 'xarray' && tc === 'xarray') {          // positions + tombstones preserved atomically
-            const te = V.TypeXArray.cast(tt).elementType();
-            const vx = V.ValueXArray.cast(sv); const out = new V.ValueXArray(tt);
-            const esite = this._sub(site, '[]');
-            out.rebuildFrom(vx, vx.items(false).map(([pos, val]) => [pos, this._retypeElement(val, te, policy, esite)]));
-            return out;
-        }
-        if (sc === 'map' && tc === 'map') {                // element and/or key retype
-            const mt = V.TypeMap.cast(tt); const kt = mt.keyType(); const te = mt.elementType();
-            const vm = V.ValueMap.cast(sv); const out = new V.ValueMap(tt);
-            const ksite = this._sub(site, '<key>'); const vsite = this._sub(site, '<val>');
-            for (const [k, val] of vm.items(false))
-                this._mapSet(out, this._retypeElement(k, kt, policy, ksite),
-                    this._retypeElement(val, te, policy, vsite), site);
-            return out;
+        // Same-kind container / holder element retype (optional / vector / set / map / xarray /
+        // tuple; element widen A / narrow B) — the retype twin of value()'s traversal, through the
+        // SAME `_mapElements` loop, so the two can never drift (the drift that opened the earlier
+        // Optional/Tuple gap). Each element rides `_retypeElement` (the policy-governed leaf path);
+        // the container shape is preserved. A same-shape narrow that collides two elements is the
+        // Class-B non-injective loss `_setAdd` / `_mapSet` guard. Guarded `sc === tc`: a cross-kind
+        // pair (all bridged above) must NOT reach `_mapElements`, which dispatches on the target.
+        if (sc === tc) {
+            const mapped = this._mapElements(
+                sv, tt, (e, et, s) => this._retypeElement(e, et, policy, s), site);
+            if (mapped !== null) return mapped;
         }
 
         // -- leaf: a scalar<->scalar conversion from here on. Any COMPOSITE reaching this point has no
@@ -822,66 +849,16 @@ export class DefinitionsRewriter {
             return new V.ValueEnumeration(V.TypeEnumeration.cast(tt), name);
         }
 
-        if (tc === 'optional') {
-            const vo = V.ValueOptional.cast(v);
-            const et = V.TypeOptional.cast(tt).elementType();
-            if (vo.isNil()) return new V.ValueOptional(tt);
-            return new V.ValueOptional(tt, this.value(vo.unwrap(false), et, site));
-        }
-
-        if (tc === 'vector') {
-            const vv = V.ValueVector.cast(v);
-            const et = V.TypeVector.cast(tt).elementType();
-            const out = new V.ValueVector(tt);
-            const esite = this._sub(site, '[]');
-            for (let i = 0; i < vv.size(); i++) out.append(this.value(vv.at(i, false), et, esite));
-            return out;
-        }
-
-        if (tc === 'set') {
-            const vs = V.ValueSet.cast(v);
-            const et = V.TypeSet.cast(tt).elementType();
-            const out = new V.ValueSet(tt); const seen = new Set();
-            const esite = this._sub(site, '{}');
-            for (let i = 0; i < vs.size(); i++) this._setAdd(out, this.value(vs.at(i, false), et, esite), seen, site);
-            return out;
-        }
-
-        if (tc === 'map') {
-            const vm = V.ValueMap.cast(v);
-            const mt = V.TypeMap.cast(tt); const kt = mt.keyType(); const et = mt.elementType();
-            const out = new V.ValueMap(tt);
-            const ksite = this._sub(site, '<key>'); const vsite = this._sub(site, '<val>');
-            for (const [k, val] of vm.items(false))
-                this._mapSet(out, this.value(k, kt, ksite), this.value(val, et, vsite), site);
-            return out;
-        }
-
-        if (tc === 'tuple') {
-            const vt = V.ValueTuple.cast(v);
-            const ets = V.TypeTuple.cast(tt).types();
-            const parts = [];
-            for (let i = 0; i < vt.size(); i++) parts.push(this.value(vt.at(i, false), ets[i], this._sub(site, `.${i}`)));
-            return new V.ValueTuple(tt, parts);
-        }
+        // Container / holder kinds (optional / vector / set / map / xarray / tuple) — one shared
+        // traversal, so `value` and `_retype`'s same-kind element retype stay in lockstep.
+        const mapped = this._mapElements(v, tt, (e, et, s) => this.value(e, et, s), site);
+        if (mapped !== null) return mapped;
 
         if (tc === 'variant') {
             const vv = V.ValueVariant.cast(v);
             const inner = this.value(vv.unwrap(false), undefined, site);
             const out = new V.ValueVariant(tt);
             out.wrap(inner, inner.type());
-            return out;
-        }
-
-        if (tc === 'xarray') {
-            // Trans-definitions (de)serialization of the XArray, ATOMIC: source's layout
-            // (positions + tombstones) is copied opaquely inside rebuildFrom, and the elements —
-            // re-mapped here — are installed in the SAME step.
-            const vx = V.ValueXArray.cast(v);
-            const et = V.TypeXArray.cast(tt).elementType();
-            const esite = this._sub(site, '[]');
-            const out = new V.ValueXArray(tt);
-            out.rebuildFrom(vx, vx.items(false).map(([pos, val]) => [pos, this.value(val, et, esite)]));
             return out;
         }
 
