@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.1] - 2026-07-18
+
+Bugfix (parity with Python 0.2.1). A field `retypeField` between two **composite** types the engine
+holds crashed in the scalar-narrowing tail (and a lossless widening of one was wrongly refused).
+
+- `Optional<A> → Optional<B>` and `Tuple<...> → Tuple<...>` now join the same-kind **element
+  retype** family — widen (Class A, automatic) / narrow (Class B, policied), nil- and
+  position-preserving, nested-aware — the twin of the `Set`/`Vector`/`Map`/`XArray` element retype.
+- `_retype` gained a fail-closed **composite guard**: any composite retype with no conversion branch
+  (`struct↔struct`, `enum↔enum`, `key↔key`, …) is now a clean `[unsupported]` refusal, never a
+  crash — use a Class-C hook.
+- `REWRITE.md` updated to match.
+
 ## [0.2.0] - 2026-07-17
 
 Beta. Brings the Node port to full parity with Python `dsviper-database-tools` 0.2.0 — the

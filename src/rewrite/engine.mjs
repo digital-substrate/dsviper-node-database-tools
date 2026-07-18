@@ -75,6 +75,11 @@ export const INT_RANGE = {   // BigInt bounds (JS int64/uint64 are bigint)
     uint8: [0n, 255n], uint16: [0n, 65535n], uint32: [0n, 4294967295n], uint64: [0n, 2n ** 64n - 1n],
 };
 const FLOATS = new Set(['float', 'double']);
+// composite (non-scalar) kinds. A retype among these is expressed by a structural branch in
+// `_retype`; one that reaches the scalar-leaf tail unhandled fails CLOSED (invariant #1) rather
+// than crashing in the numeric path (which assumes a scalar operand).
+const COMPOSITES = new Set(['struct', 'enum', 'concept', 'club', 'optional', 'vector', 'set',
+    'map', 'xarray', 'tuple', 'variant', 'key', 'any']);
 const IS64 = (tc) => tc === 'int64' || tc === 'uint64';
 const coerce = (tc, n) => (IS64(tc) ? n : Number(n));          // bigint for 64-bit int, else number
 // numeric native for a target leaf: a float/double target takes a JS number; an int target
@@ -145,7 +150,7 @@ export function vecmatRetypeClass(srcType, newType) {
 // narrowing => B). Returns 'A' / 'B', or null if not a same-kind container retype.
 function containerElementRetypeClass(srcType, newType) {
     const sc = srcType.typeCode(); const tc = newType.typeCode();
-    if (sc !== tc || !['set', 'vector', 'xarray', 'map'].includes(sc)) return null;
+    if (sc !== tc || !['set', 'vector', 'xarray', 'map', 'optional', 'tuple'].includes(sc)) return null;
 
     const elemClass = (se, te) => {
         const nested = containerElementRetypeClass(se, te);        // nested container -> recurse
@@ -160,7 +165,12 @@ function containerElementRetypeClass(srcType, newType) {
         return [elemClass(sm.keyType(), tm.keyType()),
             elemClass(sm.elementType(), tm.elementType())].includes('B') ? 'B' : 'A';
     }
-    const getter = { set: V.TypeSet, vector: V.TypeVector, xarray: V.TypeXArray }[sc];
+    if (sc === 'tuple') {                                          // fixed arity — classify every position
+        const st = V.TypeTuple.cast(srcType).types(); const ts = V.TypeTuple.cast(newType).types();
+        if (st.length !== ts.length) return null;                 // an arity change is a shape change, not this
+        return st.some((a, i) => elemClass(a, ts[i]) === 'B') ? 'B' : 'A';
+    }
+    const getter = { set: V.TypeSet, vector: V.TypeVector, xarray: V.TypeXArray, optional: V.TypeOptional }[sc];
     return elemClass(getter.cast(srcType).elementType(), getter.cast(newType).elementType());
 }
 
@@ -370,7 +380,7 @@ export class DefinitionsRewriter {
     //    a same-kind composite or an identical type recurses via `value`.
     _retypeElement(elem, te, policy, esite) {
         if (elem.typeCode() !== te.typeCode()) return this._retype(elem, te, policy, esite);
-        if (['set', 'vector', 'xarray', 'map', 'vec', 'mat'].includes(te.typeCode())
+        if (['set', 'vector', 'xarray', 'map', 'vec', 'mat', 'optional', 'tuple'].includes(te.typeCode())
             && elem.type().runtimeId().representation() !== te.runtimeId().representation())
             return this._retype(elem, te, policy, esite);
         return this.value(elem, te, esite);
@@ -418,6 +428,21 @@ export class DefinitionsRewriter {
             const inner = vo.unwrap(false);
             if (inner.typeCode() === tc) return this.value(inner, tt, site);
             return this._retype(inner, tt, policy, site);
+        }
+        if (sc === 'optional' && tc === 'optional') {                 // Optional<A> -> Optional<B>: element
+            const vo = V.ValueOptional.cast(sv);                      // retype, nil-preserving (a nil holds
+            if (vo.isNil()) return new V.ValueOptional(tt);          // no element to convert). The inner A->B
+            const et = V.TypeOptional.cast(tt).elementType();        // rides _retypeElement — a leaf narrow
+            return new V.ValueOptional(tt, this._retypeElement(vo.unwrap(false), et, policy, site));   // is policied.
+        }
+        if (sc === 'tuple' && tc === 'tuple') {                        // Tuple<...> -> Tuple<...>: per-position
+            const vt = V.ValueTuple.cast(sv);                         // element retype at fixed arity.
+            const ets = V.TypeTuple.cast(tt).types();
+            if (vt.size() !== ets.length)
+                throw new Error(`[unsupported] tuple arity change ${vt.size()}->${ets.length} — a tuple retype must preserve arity (it is a per-position element conversion)`);
+            const parts = [];
+            for (let i = 0; i < ets.length; i++) parts.push(this._retypeElement(vt.at(i, false), ets[i], policy, this._sub(site, `.${i}`)));
+            return new V.ValueTuple(tt, parts);
         }
         if (sc === 'vector' && tc === 'set') {                        // Vector -> Set (collapse: the
             const et = V.TypeSet.cast(tt).elementType();              // set dedups silently — that is
@@ -548,7 +573,11 @@ export class DefinitionsRewriter {
             return out;
         }
 
-        // -- leaf
+        // -- leaf: a scalar<->scalar conversion from here on. Any COMPOSITE reaching this point has no
+        //    conversion branch above — fail CLOSED (invariant #1), never the numeric tail's crash on a
+        //    composite operand. Such a retype (struct<->struct, enum<->enum, key<->key, …) needs a hook.
+        if (COMPOSITES.has(sc) || COMPOSITES.has(tc))
+            throw new Error(`[unsupported] retype ${sc}->${tc}: no conversion branch for this composite retype — use a transformField / transformType hook, or an explicit directive; the engine will not guess a composite mapping`);
         if (WIDENING.has(`${sc}>${tc}`))
             return V.Value.create(tt, numericNative(tc, V.Value.dumps(sv)));   // A: widen (lossless)
         if (tc === 'string') return new V.ValueString(String(V.Value.dumps(sv)));    // A: format (total)
