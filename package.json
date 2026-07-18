@@ -1,6 +1,6 @@
 {
   "name": "@digitalsubstrate/dsviper-database-tools",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Definitions-directed document rewriting and database migration for Viper, in Node over @digitalsubstrate/dsviper — a 1:1 port of the Python dsviper-database-tools. Rebuild Base(A) into a fresh Base(B); the source stays as rollback.",
   "type": "module",
   "main": "./src/index.mjs",

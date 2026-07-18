@@ -80,3 +80,18 @@ check('plan classifies a container element NARROWING as Class B (warns)', () => 
     assert.ok(rep.warnings.some((w) => w.includes('missing policy')));
 });
 
+check('DiagnosticSink counts dropped even with no samples (maxSamples=0)', () => {
+    const feed = (maxSamples) => {
+        const sink = new DiagnosticSink(maxSamples);
+        sink({ site: 'S.f', op: 'drop', policy: 'drop-record', before: 'x', after: null });
+        sink({ site: 'S.f', op: 'drop', policy: 'drop-record', before: 'y', after: null });
+        sink({ site: 'S.g', op: 'narrow', policy: 'saturate', before: 99999, after: 32767 });
+        return sink.report().summary;
+    };
+    const s0 = feed(0);                                       // no samples kept at all
+    assert.equal(s0.findings, 3);
+    assert.equal(s0.dropped, 2);                             // the two elided values, still counted
+    assert.equal(s0.sites, 2);
+    assert.equal(feed(0).dropped, feed(5).dropped);
+});
+
