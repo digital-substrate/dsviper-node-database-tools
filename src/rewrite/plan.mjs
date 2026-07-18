@@ -7,7 +7,7 @@
 // forgotten-rename trap). It also raises warnings the author should see before running.
 
 import V from '../dsviper.mjs';
-import { WIDENING, INT_RANGE, constDefs, vecmatRetypeClass } from './engine.mjs';
+import { WIDENING, INT_RANGE, constDefs, vecmatRetypeClass, containerElementRetypeClass } from './engine.mjs';
 
 const FLOATS = new Set(['float', 'double']);
 const INTS = new Set(Object.keys(INT_RANGE));
@@ -21,6 +21,9 @@ function classifyRetype(srcType, newType) {
     const vm = vecmatRetypeClass(srcType, newType);    // Vec/Mat element widen (A) / narrow (B) / refused
     if (vm !== null) return vm;
     const sc = srcType.typeCode(); const tc = newType.typeCode();
+    const ce = containerElementRetypeClass(srcType, newType);   // same-kind element retype of a container
+    if (ce !== null)                                            // (set/vector/map/xarray) or holder (optional/tuple)
+        return [ce, ce === 'A' ? `${sc} element widening (lossless)` : `${sc} element narrowing (needs a policy)`];
     if (sc === 'variant' && tc === 'variant') {        // arm-set change (arms compared by repr)
         const srcArms = new Set(V.TypeVariant.cast(srcType).types().map((a) => a.representation()));
         const tgtArms = new Set(V.TypeVariant.cast(newType).types().map((a) => a.representation()));

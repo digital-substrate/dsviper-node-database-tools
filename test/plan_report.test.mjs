@@ -57,3 +57,26 @@ check('DiagnosticSink aggregates a saturate bite', () => {
     assert.ok(formatReport(rep).includes('Diagnostic report'));
 });
 
+check('plan classifies a container element WIDENING as Class A (no false warning)', () => {
+    const src = new V.Definitions();
+    const s = struct(src, 'S', [['f', new V.TypeSet(T.INT32)]]);
+    const d = new TransformationDirectives();
+    d.retypeField(s.representation(), 'f', new V.TypeSet(T.INT64));   // widen, no policy — engine says A
+    const rep = plan(src, d);
+    const rt = rep.changes.find((c) => c.kind === 'retype_field');
+    assert.equal(rt.class, 'A');
+    assert.equal(rt.loss, false);
+    assert.ok(!rep.warnings.some((w) => w.includes('missing policy')));
+});
+
+check('plan classifies a container element NARROWING as Class B (warns)', () => {
+    const src = new V.Definitions();
+    const s = struct(src, 'S', [['f', new V.TypeSet(T.INT64)]]);
+    const d = new TransformationDirectives();
+    d.retypeField(s.representation(), 'f', new V.TypeSet(T.INT32));   // narrow, no policy
+    const rep = plan(src, d);
+    const rt = rep.changes.find((c) => c.kind === 'retype_field');
+    assert.equal(rt.class, 'B');
+    assert.ok(rep.warnings.some((w) => w.includes('missing policy')));
+});
+

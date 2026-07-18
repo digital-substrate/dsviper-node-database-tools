@@ -148,7 +148,7 @@ export function vecmatRetypeClass(srcType, newType) {
 // a map, key) type changes: widen / format / same-kind → 'A' (lossless), a narrowing element →
 // 'B' (needs a policy). Recurses for nested containers; a map weighs both key and value (either
 // narrowing => B). Returns 'A' / 'B', or null if not a same-kind container retype.
-function containerElementRetypeClass(srcType, newType) {
+export function containerElementRetypeClass(srcType, newType) {
     const sc = srcType.typeCode(); const tc = newType.typeCode();
     if (sc !== tc || !['set', 'vector', 'xarray', 'map', 'optional', 'tuple'].includes(sc)) return null;
 
