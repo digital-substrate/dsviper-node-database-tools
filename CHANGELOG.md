@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.4] - 2026-07-18
+
+Internal refactor, no behaviour change (parity with Python 0.2.4).
+
+- **One container traversal instead of two.** `value()` and `_retype()` each hand-maintained the same
+  six container/holder branches (`Optional` / `Vector` / `Set` / `Map` / `XArray` / `Tuple`),
+  differing only by the per-element function — the duplication that had let the `Optional` / `Tuple`
+  element retype drift out of sync. They now share one `_mapElements(v, tt, elemFn, site)` loop, so
+  the two can no longer diverge. `Vec` / `Mat` and `variant` stay separate by design; the tuple arity
+  guard and the set-collapse / map-collision guards live in the shared loop.
+- **`_setAdd` now uses the native `ValueSet.contains()`** — exact parity with Python's `ne in out`,
+  dropping the `seen` representation-set workaround. The method was always exposed by the binding
+  runtime; only its `.d.ts` typing had omitted it (fixed upstream in `@digitalsubstrate/dsviper`
+  1.2.6). The peer floor stays `>= 1.2.5` (runtime unchanged; the fix is typing-only).
+
 ## [0.2.3] - 2026-07-18
 
 - **`DiagnosticSink`'s `dropped` count no longer depends on `maxSamples`.** It was derived from the

@@ -274,13 +274,21 @@ source, and per field the walk decides —
 
 A field-level hook always wins over the global `transformType` (resolution: field > type). Every
 other target `typeCode` — optional, vector, set, map, tuple, variant, xarray, any, enum, key,
-commit_id, primitive — has its own branch; the container branches recurse element-wise, with
-`_setAdd` / `_mapSet` guarding a set-collapse / map-collision.
+commit_id, primitive — has its own branch. The six **container / holder** kinds (optional, vector,
+set, map, xarray, tuple) do **not** each spell out their own loop: they go through one shared
+traversal, `_mapElements(v, tt, elemFn, site)`, which is the single place that knows those kinds and
+rebuilds `tt` element-wise, with `_setAdd` / `_mapSet` guarding a set-collapse / map-collision.
+`value` passes its type-preserving recurse as `elemFn`; `_retype` (below) passes its policied
+`_retypeElement`. Sharing one loop is what keeps the two from drifting — a hand-kept second copy is
+exactly what once let the `Optional` / `Tuple` element retype fall out of sync. `variant` (arm-set
+semantics) and `vec` / `mat` (numeric, cell-addressed) are **not** in `_mapElements` — they keep
+their own branches.
 
 `_retype` is the sibling of `value` for a *changed* type: the **structural** conversions (unwrap an
 `Optional`, the `Set`↔`Vector` / `Vector`↔`XArray` / `Vec`↔`Vector` bridges, a **same-kind element
-retype** — of a `Set`/`Vector`/`Map`/`XArray` container *or* an `Optional`/`Tuple` holder — and a
-variant arm-set change) and the **leaf** conversions (widen, `→string`, parse, narrow, `float→int`).
+retype** — of a `Set`/`Vector`/`Map`/`XArray` container *or* an `Optional`/`Tuple` holder, dispatched
+through the **same** `_mapElements` loop as `value`, guarded `sc === tc` — and a variant arm-set
+change) and the **leaf** conversions (widen, `→string`, parse, narrow, `float→int`).
 A Class-B branch consults its policy only on the offender (invariant #3). Any composite that reaches
 the leaf tail with no branch is refused by the `COMPOSITES` guard (invariant #1) — never crashed.
 
@@ -304,12 +312,15 @@ Most branches are a plain recurse. These are the ones where a naïve "just copy 
   content-addressed and stable across stores, so it passes through. A `commit_id` is remapped to its
   re-issued target **only** when `_commitIdRemap` is installed (the CommitDatabase replay wires
   it); a Database migration, or an external cross-base id, keeps it verbatim.
-- **same-kind element retype — per element, policied, nested.** A `Set` / `Vector` / `Map` / `XArray`
-  container *or* an `Optional` / `Tuple` holder `<A> → <B>` runs each element through
-  `_retypeElement` (the policy-governed leaf path), nil- and position-preserving, guarding a
-  post-narrow set-collapse / map-collision; `containerElementRetypeClass` classifies it (widen A
-  / narrow B) and recurses for nested containers/holders. A composite retype with **no** such branch
-  (`struct↔struct`, `enum↔enum`, `key↔key`, …) is refused by the `COMPOSITES` guard, not crashed —
+- **same-kind element retype — per element, policied, nested; one traversal.** A `Set` / `Vector` /
+  `Map` / `XArray` container *or* an `Optional` / `Tuple` holder `<A> → <B>` runs each element through
+  `_retypeElement` (the policy-governed leaf path) via `_mapElements` — the *same* loop `value` uses,
+  so the type-preserving and the policied walks cannot diverge — nil- and position-preserving,
+  guarding a post-narrow set-collapse / map-collision; `containerElementRetypeClass` classifies it
+  (widen A / narrow B) and recurses for nested containers/holders. The `tuple` arity guard lives in
+  that loop (a conversion is per-position — it may not add/drop positions). A composite retype with
+  **no** such branch (`struct↔struct`, `enum↔enum`, `key↔key`, …) is refused by the `COMPOSITES`
+  guard, not crashed —
   use a Class-C hook.
 
 ---
