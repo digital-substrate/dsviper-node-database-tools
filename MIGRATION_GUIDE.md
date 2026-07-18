@@ -229,8 +229,15 @@ Run it — the source is opened read-only, a fresh target is written, `--verify`
 node bin/database_migrate.mjs shop_v2.mjs old.db new.db --verify
 ```
 
-When a migration is lossy or destructive, walk the loop (§2) from Node first — look before you
-leap:
+When a migration is lossy or destructive, walk the loop (§2) first — look before you leap. The
+quickest is the CLI itself (both steps are read-only, so the target is omitted):
+
+```bash
+node bin/database_migrate.mjs shop_v2.mjs old.db --plan      # identify — what could change
+node bin/database_migrate.mjs shop_v2.mjs old.db --dry-run   # inform   — what happens to the data
+```
+
+or drive the same steps from Node for finer control:
 
 ```js
 import dsviper from '@digitalsubstrate/dsviper';

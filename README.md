@@ -27,9 +27,10 @@ This package gives you:
   DAG topology, not a re-materialised snapshot.
 - **`plan` / `formatPlan`** and **`DiagnosticSink` / `formatReport`** — static (schema-only)
   and dynamic (real per-site loss) pre-flight reports.
-- **`bin/database_migrate.mjs`** — a command-line tool that loads a migration file,
-  opens the source read-only, and writes a fresh target — dispatching on the source
-  (`Database` or `CommitDatabase`).
+- **`bin/database_migrate.mjs`** — a command-line tool for the whole decision loop: it loads a
+  migration file and dispatches on the source (`Database` or `CommitDatabase`) — `--plan`
+  (identify) and `--dry-run` (inform) are read-only pre-flight; `--verify` migrates and proves the
+  result.
 
 See the **[migration guide](MIGRATION_GUIDE.md)** for how to *think* about a migration, and
 **[REWRITE.md](REWRITE.md)** for how the rewrite *works* and how to extend it (code-linked).
@@ -75,15 +76,19 @@ export function buildDirectives(sourceDefs) {
 }
 ```
 
-Run it:
+Run it — the decision loop is on the command line (*identify → inform → decide*):
 
 ```bash
-node bin/database_migrate.mjs migration_shop_v2.mjs old.db new.db --verify
+node bin/database_migrate.mjs migration_shop_v2.mjs old.db          --plan      # identify: the static plan, no write
+node bin/database_migrate.mjs migration_shop_v2.mjs old.db          --dry-run   # inform:   real loss on real data, no write
+node bin/database_migrate.mjs migration_shop_v2.mjs old.db new.db   --verify    # decide:   migrate, then prove it faithful
 ```
 
-`old.db` is opened read-only and left intact; `new.db` is the rebuilt database.
-`--verify` proves the target is a faithful image (both a `Database` and a `CommitDatabase`),
-`--force` overwrites an existing target, `-v` prints the migration summary.
+`old.db` is opened read-only and left intact; `new.db` is the rebuilt database. `--plan`
+(schema-only, what *could* change) and `--dry-run` (which policies bite, what would drop, on the
+real data) are **read-only pre-flight** — they print and exit, so the target is omitted. `--verify`
+proves the target is a faithful image (both a `Database` and a `CommitDatabase`), `--force`
+overwrites an existing target, `-v` prints the migration summary.
 
 ## The directive surface
 
