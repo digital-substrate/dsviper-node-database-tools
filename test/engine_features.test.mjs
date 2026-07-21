@@ -396,6 +396,36 @@ describe('containers verbatim + attachments + key instance id', () => {
         assert.equal(r.at('count'), 5);
     });
 
+    it('attachment directives address it by identifier', () => {
+        // An attachment's identity is its `identifier()` — `NS::KeyConcept.name` — which is what
+        // the directive parameters name (`oldId`, `identifier`). The bare local name still works
+        // (legacy), but it is not an identity: two concepts in one namespace may each carry an
+        // attachment of the same name, and a local-name directive then hits every homonym.
+        const src = new V.Definitions();
+        const customer = src.createConcept(NS, 'Customer');
+        const vendor = src.createConcept(NS, 'Vendor');
+        const order = struct(src, 'Order', [['qty', T.INT32]]);
+        src.createAttachment(NS, 'orders', customer, order, 'by customer');
+        src.createAttachment(NS, 'orders', vendor, order);
+        assert.deepEqual(new Set(src.const().attachments().map((a) => a.identifier())),
+            new Set([`${NS.name()}::Customer.orders`, `${NS.name()}::Vendor.orders`]));
+
+        const d = new TransformationDirectives();
+        d.renameAttachment(`${NS.name()}::Vendor.orders`, 'supplierOrders');   // ONE of the two
+        d.documentAttachment(`${NS.name()}::Customer.orders`, 'kept, re-documented');
+        const [, target] = DefinitionsRewriter.fromDirectives(src, d);
+        const byId = new Map(target.const().attachments().map((a) => [a.identifier(), a]));
+        assert.deepEqual(new Set(byId.keys()),
+            new Set([`${NS.name()}::Customer.orders`, `${NS.name()}::Vendor.supplierOrders`]));
+        assert.equal(byId.get(`${NS.name()}::Customer.orders`).documentation(), 'kept, re-documented');
+
+        const legacy = new TransformationDirectives();
+        legacy.renameAttachment('orders', 'everyOne');      // the local name: ambiguous, hits both
+        const [, everyone] = DefinitionsRewriter.fromDirectives(src, legacy);
+        assert.deepEqual(new Set(everyone.const().attachments().map((a) => a.identifier())),
+            new Set([`${NS.name()}::Customer.everyOne`, `${NS.name()}::Vendor.everyOne`]));
+    });
+
     it('key instance id is stable under a concept rename', () => {
         const src = new V.Definitions();
         const concept = src.createConcept(NS, 'Material');

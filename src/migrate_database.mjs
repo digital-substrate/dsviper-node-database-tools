@@ -11,6 +11,7 @@ import { unlinkSync } from 'node:fs';
 import V from './dsviper.mjs';
 import { copyBlob } from './blobs.mjs';
 import { DefinitionsRewriter, Unrepresentable, DiagnosticSink } from './rewrite/index.mjs';
+import { attHit } from './rewrite/engine.mjs';
 
 export class VerificationError extends Error {}
 
@@ -135,7 +136,7 @@ function transformPass(source, rewriter, sink, { diag = null, progress = null } 
     rewriter._sink = diag;
     rewriter._sourceView = source.attachmentGetting();
     const atts = source.definitions().attachments()
-        .filter((a) => !rewriter.d.droppedAttachments.has(a.identifier().split('.').pop()));
+        .filter((a) => !attHit(rewriter.d.droppedAttachments, a));
     try {
         for (let attI = 0; attI < atts.length; attI++) {
             const att = atts[attI];
@@ -175,7 +176,7 @@ export function migrate(source, rewriter, target, onProgress = null) {
     const copied = new Set();                              // blob-id reprs copied this run
     return withSourceSnapshot(source, () => {
         const liveAtts = source.definitions().attachments()
-            .filter((a) => !rewriter.d.droppedAttachments.has(a.identifier().split('.').pop()));
+            .filter((a) => !attHit(rewriter.d.droppedAttachments, a));
         const progress = new Progress(onProgress, source.blobStatistics().totalSize(), liveAtts.length);
         target.beginTransaction(V.Databasing.TRANSACTION_EXCLUSIVE);
 
@@ -227,7 +228,7 @@ export function verify(source, rewriter, target) {
     rewriter._sourceView = source.attachmentGetting();
     try {
         for (const att of source.definitions().attachments()) {
-            if (rewriter.d.droppedAttachments.has(att.identifier().split('.').pop())) continue;   // no target image
+            if (attHit(rewriter.d.droppedAttachments, att)) continue;          // no target image
             const tgtAtt = rewriter.attachment(att);
             const keys = source.keys(att);
             for (let i = 0; i < keys.size(); i++) {

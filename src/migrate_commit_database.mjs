@@ -13,6 +13,7 @@
 import V from './dsviper.mjs';
 import { copyBlob } from './blobs.mjs';
 import { DefinitionsRewriter, Unrepresentable, DiagnosticSink } from './rewrite/index.mjs';
+import { attHit } from './rewrite/engine.mjs';
 import { VerificationError, removeDbFile, refuseUnacknowledgedAttachmentDrops } from './migrate_database.mjs';
 
 export { VerificationError };
@@ -135,7 +136,7 @@ export function translateOpcode(op, am, rewriter, sourceDefs, ensureBlobs) {
 // opcode is not re-issued (skipped). The CommitDatabase parity of silo 2 skipping a dropped
 // attachment's documents: uniform over the whole partition; keys are not foreign keys.
 function addressesDroppedAttachment(op, sourceDefs, dropped) {
-    return dropped.size > 0 && dropped.has(op.arguments(sourceDefs)[0].identifier().split('.').pop());
+    return dropped.size > 0 && attHit(dropped, op.arguments(sourceDefs)[0]);
 }
 
 // An insertInXarray(...value) is stored as XArray_Insert (empty position) + XArray_Update (the

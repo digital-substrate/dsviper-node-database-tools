@@ -877,6 +877,28 @@ export class DefinitionsRewriter {
 }
 
 
+// -- addressing an attachment in a directive -------------------------------------
+//    An attachment's identity is its `identifier()` — `NS::KeyConcept.name` — and that is what
+//    the directive API names (`renameAttachment(oldId, ...)`, `dropAttachment(identifier)`).
+//    The bare local name is accepted as a legacy key, but it is NOT an identity: two concepts in
+//    one namespace may each carry an attachment of the same name (`N::Customer.orders` and
+//    `N::Vendor.orders`), and a directive written that way addresses every homonym at once.
+//    Prefer the identifier; a name-based consumer (a source codemod) can only mirror that one.
+export function attKeys(a) {
+    const identifier = a.identifier();
+    return [identifier, identifier.slice(identifier.lastIndexOf('.') + 1)];
+}
+
+export function attGet(mapping, a, fallback = undefined) {
+    for (const key of attKeys(a)) if (Object.hasOwn(mapping, key)) return mapping[key];
+    return fallback;
+}
+
+export function attHit(container, a) {
+    return attKeys(a).some((key) => container.has(key));
+}
+
+
 // -- an add_field default lives in a TARGET field but is authored against the SOURCE domain:
 //    expressible only if it references no named (migrated) type — a primitive leaf or a container
 //    of such. A default embedding a struct/enum/key/Any would carry stale source ids.
@@ -967,10 +989,10 @@ function formatDropReport(src, directives, refsDropped) {
             if (droppedTypes.has(m.representation())) findings.push([cl.representation(), `member ${m.representation()}`, m.representation()]);
     }
     for (const a of src.attachments()) {
-        if (droppedAtts.has(a.identifier().split('.').pop())) continue;
+        if (attHit(droppedAtts, a)) continue;
         for (const [label, tt] of [['key', a.keyType()], ['document', a.documentType()]]) {
             const hit = refsDropped(tt);
-            if (hit) findings.push([`attachment ${a.identifier().split('.').pop()}`, `${label} type : ${tt.representation()}`, hit]);
+            if (hit) findings.push([`attachment ${a.identifier()}`, `${label} type : ${tt.representation()}`, hit]);
         }
     }
 
@@ -1009,7 +1031,7 @@ export function buildTargetDefinitions(sourceDefs, directives) {
         return new V.NameSpace(newUuid, newName);
     };
     const attNs = (a) => {                            // attachment namespace: per-attachment move, else bulk
-        const ov = directives.attachmentNamespaces[a.identifier().split('.').pop()];
+        const ov = attGet(directives.attachmentNamespaces, a);
         return ov !== undefined ? ov : tgtNs(a);
     };
 
@@ -1190,11 +1212,12 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     // attachments — a named Map<Key, Document>: remap key + document types, rename id
     const attMap = {};
     for (const a of src.attachments()) {
-        const local = a.identifier().split('.').pop();     // identifier() is fully-qualified
-        if (droppedAtts.has(local)) continue;              // drop_attachment: not recreated
-        const name = directives.attachmentRenames[local] ?? local;
+        if (attHit(droppedAtts, a)) continue;              // drop_attachment: not recreated
+        const local = a.identifier().slice(a.identifier().lastIndexOf('.') + 1);
+        const renamed = attGet(directives.attachmentRenames, a, local);
+        const name = renamed.slice(renamed.lastIndexOf('.') + 1);   // a new id may be qualified
         const na = target.createAttachment(attNs(a), name, mapT(a.keyType()), mapT(a.documentType()),
-            directives.attachmentDocs[local] ?? a.documentation());
+            attGet(directives.attachmentDocs, a, a.documentation()));
         attMap[a.runtimeId().representation()] = na;
     }
 
