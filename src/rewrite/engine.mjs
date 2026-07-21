@@ -1159,7 +1159,13 @@ export function buildTargetDefinitions(sourceDefs, directives) {
                     else if (f.name() in resized) ftype = resizedType(s.representation(), f, resized[f.name()]);   // resize
                     else if (transposed.has(f.name())) ftype = transposedType(s.representation(), f);              // transpose
                     else if (f.name() in retypes) ftype = retypes[f.name()][0];                // retype
-                    else ftype = mapT(f.type());
+                    else {                                            // carried: keep the type, but carry a
+                        const dflt = f.defaultValue();                // non-zero domain-free default (part of the
+                        if (dflt !== null && dflt !== undefined && defaultDomainFree(f.type()))  // runtimeId, like a
+                            ftype = V.Value.create(mapT(f.type()), dflt);  // doc) — under the MAPPED type, so a
+                        else                                          // transform_type/remap of the default's own
+                            ftype = mapT(f.type());                   // type flows through it, not just the field
+                    }
                     fields.push([fren[f.name()] ?? f.name(), ftype, fdocs[f.name()] ?? f.documentation()]);
                 }
                 for (const [name, payload, derive] of adds)         // family 2: add (static or derived)
