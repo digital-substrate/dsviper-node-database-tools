@@ -379,13 +379,18 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
             if (f === undefined || tf === undefined) continue;
             edit(f.typeSpan(), tf.type().representation(tns) + ' ');
             // a default was authored against the OLD type, so the engine does not carry it onto a
-            // type-changed field. Follow the engine (it is the authority on the shape): cut the
-            // `= <literal>` tail — the span from the field name's end to the declaration's end —
-            // or the text would declare a default the target definition does not have.
-            if (tf.defaultValue() === undefined || tf.defaultValue() === null) {
-                const [src, , nstop] = resolve(f.nameSpan());
-                const [, , dstop] = resolve(f.declarationSpan());
-                if (dstop > nstop) edits.push(new Edit(src, nstop, dstop, ''));
+            // type-changed field. Follow the engine (it is the authority on the shape) and cut the
+            // `= <literal>` clause, or the text would declare a default the target definition does
+            // not have. The clause is a grammar rule of its own, so the parser hands us its span —
+            // nothing to infer from the neighbouring spans.
+            const noDefault = tf.defaultValue() === undefined || tf.defaultValue() === null;
+            if (noDefault && f.defaultSpan() !== null) {
+                const [src, dstart0, dstop] = resolve(f.defaultSpan());
+                const text = files[src];
+                let dstart = dstart0;
+                while (dstart > 0 && (text[dstart - 1] === ' ' || text[dstart - 1] === '\t'))
+                    dstart--;                          // the clause starts at `=`; the space before
+                edits.push(new Edit(src, dstart, dstop, ''));   // it is a separator
             }
         }
     }
