@@ -961,6 +961,109 @@ function validateDimensionOps(src, directives) {
 // report string, or null if the drops dangle nothing. A reference removed by another directive
 // (drop_field / retype_field / transform_field) is exempt. Nothing references an attachment, so
 // drop_attachment never appears here.
+// Accumulate EVERY directive that names something the SOURCE schema does not hold, and refuse
+// them together — before any definition is built.
+//
+// A directive names its target by its SOURCE name, so a misspelling matches nothing and the
+// directive simply never fires: the target is built as if it had not been written, the digest
+// agrees with it, and the migration reports success having done nothing. That silence is the
+// failure mode this guard removes; it is worst for a source codemod, where the only evidence of
+// success is a diff.
+//
+// Two families are deliberately NOT checked, and for the same reason in both — the name is not a
+// source name: fieldOrder / caseOrder list the TARGET member set (their holder is checked, their
+// contents are validated by the build, which refuses a non-permutation); and transformType keys
+// its source by runtimeId, which need not occur in the persistence schema at all (a composite used
+// only in a function-pool signature is the case the source codemod exists to handle).
+function refuseUnknownTargets(src, directives) {
+    const structures = new Map(src.structures().map((s) => [s.representation(), s]));
+    const enumerations = new Map(src.enumerations().map((e) => [e.representation(), e]));
+    const named = new Set([...structures.keys(), ...enumerations.keys(),
+        ...src.concepts().map((c) => c.representation()),
+        ...src.clubs().map((c) => c.representation())]);
+    const namespaces = new Set([...src.structures(), ...src.enumerations(),
+        ...src.concepts(), ...src.clubs()]
+        .map((d) => d.typeName().nameSpace().uuid().representation()));
+    const attachments = new Set();
+    for (const a of src.attachments()) for (const key of attKeys(a)) attachments.add(key);
+
+    const findings = [];
+    const knownType = (directive, repr, pool, what) => {
+        if (pool.has(repr)) return true;
+        findings.push(`${directive}('${repr}') — no such ${what}`);
+        return false;
+    };
+    const knownMembers = (directive, holderRepr, holders, names, what, extra = []) => {
+        const holderWhat = what === 'fields' ? 'structure' : 'enumeration';
+        // the holder was already reported when unknown; do not report its members too
+        if (!knownType(directive, holderRepr, new Set(holders.keys()), holderWhat)) return;
+        const held = holders.get(holderRepr);
+        const have = new Set([...(what === 'fields' ? held.fields() : held.cases())
+            .map((m) => m.name()), ...extra]);
+        for (const name of names)
+            if (!have.has(name))
+                findings.push(`${directive}('${holderRepr}', '${name}') — `
+                    + `no such ${what.slice(0, -1)} in ${holderRepr}`);
+    };
+
+    for (const repr of Object.keys(directives.typeRenames)) knownType('renameType', repr, named, 'type');
+    for (const repr of Object.keys(directives.typeDocs)) knownType('documentType', repr, named, 'type');
+    for (const repr of directives.droppedTypes) knownType('dropType', repr, named, 'type');
+    for (const repr of Object.keys(directives.typeNamespaces)) knownType('moveType', repr, named, 'type');
+
+    const fieldGroups = [
+        ['renameField', directives.fieldRenames, (v) => Object.keys(v)],
+        ['dropField', directives.droppedFields, (v) => [...v]],
+        ['retypeField', directives.retypedFields, (v) => Object.keys(v)],
+        ['resizeField', directives.resizedFields, (v) => Object.keys(v)],
+        ['transposeMatField', directives.transposedFields, (v) => [...v]],
+        ['transformField', directives.transformedFields, (v) => Object.keys(v)],
+        ['documentField', directives.fieldDocs, (v) => Object.keys(v)],
+    ];
+    for (const [directive, group, namesOf] of fieldGroups) {
+        for (const [holder, entry] of Object.entries(group)) {
+            // an ADDED field takes its doc from documentField, so it is a legal target there —
+            // unlike an added case, whose doc the build does not carry (added cases default to
+            // none), which this guard therefore reports rather than silently ignoring.
+            const added = directive === 'documentField'
+                ? (directives.addedFields[holder] ?? []).map(([name]) => name) : [];
+            knownMembers(directive, holder, structures, namesOf(entry), 'fields', added);
+        }
+    }
+    for (const holder of [...Object.keys(directives.addedFields), ...Object.keys(directives.fieldOrder)])
+        knownType('addField / reorderFields', holder, new Set(structures.keys()), 'structure');
+
+    for (const [directive, group] of [['renameCase', directives.caseRenames],
+        ['removeCase', directives.removedCases], ['documentCase', directives.caseDocs]]) {
+        for (const [holder, entry] of Object.entries(group))
+            knownMembers(directive, holder, enumerations, Object.keys(entry), 'cases');
+    }
+    for (const holder of [...Object.keys(directives.addedCases), ...Object.keys(directives.caseOrder)])
+        knownType('addCase / reorderCases', holder, new Set(enumerations.keys()), 'enumeration');
+
+    for (const [directive, group] of [['renameAttachment', directives.attachmentRenames],
+        ['documentAttachment', directives.attachmentDocs],
+        ['dropAttachment', directives.droppedAttachments],
+        ['moveAttachment', directives.attachmentNamespaces]]) {
+        for (const identifier of (group instanceof Set ? group : Object.keys(group)))
+            knownType(directive, identifier, attachments, 'attachment');
+    }
+
+    for (const [directive, group] of [['renameNamespace', directives.namespaceNames],
+        ['remapNamespace', directives.namespaceUuids]]) {
+        for (const uuid of Object.keys(group))
+            knownType(directive, uuid, namespaces, 'namespace (by uuid)');
+    }
+
+    if (!findings.length) return;
+    throw new Error(`[unknown-target] ${findings.length} directive(s) name something the source `
+        + 'schema does not hold, so they would do nothing at all:\n'
+        + findings.slice().sort().map((f) => `  ${f}`).join('\n')
+        + '\nA directive names its target by its SOURCE name (the schema you migrate FROM), members '
+        + 'by their source name too — check the spelling there.');
+}
+
+
 function formatDropReport(src, directives, refsDropped) {
     const droppedTypes = directives.droppedTypes;
     const droppedAtts = directives.droppedAttachments;
@@ -1013,6 +1116,7 @@ export function buildTargetDefinitions(sourceDefs, directives) {
         }
 
     const src = constDefs(sourceDefs);
+    refuseUnknownTargets(src, directives);            // a misspelt target would silently do nothing
     validateDimensionOps(src, directives);            // resize/transpose: direct-Vec/Mat + fill, up front
     const target = new V.Definitions();
     const tmap = {};

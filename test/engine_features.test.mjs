@@ -47,6 +47,67 @@ function mkFieldT(srcT, tgtT, policy = null) {
     return [rw, target, s];
 }
 
+describe('unknown directive targets', () => {
+    // A directive names its target by its SOURCE name. A misspelling matches nothing, so the
+    // directive never fires and the migration reports success having done nothing — the guard
+    // turns that silence into one accumulated refusal, before anything is built.
+    function source() {
+        const defs = new V.Definitions();
+        const concept = defs.createConcept(NS, 'Customer');
+        const order = struct(defs, 'Order', [['qty', T.INT32]]);
+        const mode = enumT(defs, 'Mode', ['A', 'B']);
+        defs.createAttachment(NS, 'orders', concept, order);
+        return [defs, order, mode];
+    }
+
+    it('every misspelling is accumulated into one refusal', () => {
+        const [defs, order, mode] = source();
+        const d = new TransformationDirectives();
+        d.renameType(`${NS.name()}::Nope`, `${NS.name()}::X`);
+        d.renameField(order.representation(), 'ghost', 'g');
+        d.retypeField(`${NS.name()}::Absent`, 'qty', T.INT64);
+        d.renameCase(mode.representation(), 'Z', 'Y');
+        d.dropAttachment('nope');
+        d.acceptAttachmentDrops();
+        assert.throws(() => DefinitionsRewriter.fromDirectives(defs, d), (err) => {
+            assert.ok(err.message.includes('[unknown-target]'));
+            assert.ok(err.message.includes('5 directive(s)'));   // every site, not the first
+            assert.ok(err.message.includes('renameType'));
+            assert.ok(err.message.includes('no such field in'));
+            assert.ok(err.message.includes('no such structure'));  // the holder, reported once
+            assert.ok(!err.message.includes("'qty'"));             // ... and not its members too
+            assert.ok(err.message.includes('no such case in'));
+            assert.ok(err.message.includes('no such attachment'));
+            return true;
+        });
+    });
+
+    it('a faithful migration passes', () => {
+        const [defs, order, mode] = source();
+        const d = new TransformationDirectives();
+        d.renameField(order.representation(), 'qty', 'count');
+        d.addField(order.representation(), 'note', new V.ValueString('n/a'));
+        d.documentField(order.representation(), 'note', 'an ADDED field is a legal doc target');
+        d.renameCase(mode.representation(), 'A', 'Alpha');
+        d.renameAttachment(`${NS.name()}::Customer.orders`, 'orderLog');   // by identifier
+        d.reorderFields(order.representation(), ['note', 'count']);        // TARGET names
+        const [, target] = DefinitionsRewriter.fromDirectives(defs, d);
+        assert.deepEqual(target.const().structures()[0].fields().map((f) => f.name()),
+            ['note', 'count']);
+    });
+
+    it('a transformType the schema does not hold is not refused', () => {
+        // transformType keys its source by runtimeId, and that type need not occur in the
+        // persistence schema — a composite used only in a function-pool signature is the case the
+        // source codemod exists to handle. It must not be caught by this guard.
+        const [defs] = source();
+        const d = new TransformationDirectives();
+        d.transformType(new V.TypeVector(T.UINT32), new V.TypeSet(T.UINT32), (v) => v);
+        const [, target] = DefinitionsRewriter.fromDirectives(defs, d);
+        assert.ok(target.const().structures().length);
+    });
+});
+
 describe('family 1 — Any restamp + namespace axes', () => {
     it('Any restamped under a type rename', () => {
         const src = new V.Definitions();
