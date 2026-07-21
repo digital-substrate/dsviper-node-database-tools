@@ -502,6 +502,59 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(!body.includes('struct A {'));                 // the engine drops the transformed decl
     });
 
+    it('dropped type still named by a pool is refused up front', () => {
+        // A pool declares no storage, so the engine never sees one — but a signature names types,
+        // and a `dropType` can leave it naming nothing. Refused before any edit, every site
+        // accumulated: both pool kinds, nested inside a container, return type and parameters.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'struct Money { uint32 cents; };\n\nstruct Order { uint32 id; };\n\n};\n';
+        const pools = 'function_pool Tools {8d5b40a5-f9a3-4d0e-83dd-90dd282d3cbe} {\n'
+            + '  N::Money total(vector<N::Money> xs);\n'
+            + '  uint32 count(N::Order o);\n};\n'
+            + 'attachment_function_pool Ops {9d5b40a5-f9a3-4d0e-83dd-90dd282d3cbe} {\n'
+            + '  mutable uint32 bump(map<uint32, N::Money> m);\n};\n';
+
+        assert.throws(() => run({ 'model.dsm': model, 'pools.dsm': pools }, () => {
+            const d = new TransformationDirectives();
+            d.dropType('N::Money');
+            return d;
+        }), (err) => {
+            assert.ok(err.message.includes('[dropped-type-in-pool]'));
+            assert.ok(err.message.includes("Tools::total — return type"));
+            assert.ok(err.message.includes("Tools::total — parameter 'xs'"));   // nested in a vector
+            assert.ok(err.message.includes("Ops::bump — parameter 'm'"));       // map, other kind
+            assert.ok(!err.message.includes('count'));                          // names no dropped type
+            return true;
+        });
+    });
+
+    it('transform type rewriting a pool signature is notified', () => {
+        // Not dangling — the signature is rewritten to the new type, which is what was asked —
+        // but it silently changes a pool's API, so the author is told rather than refused.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'struct Money { uint32 cents; };\n\n};\n';
+        const pools = 'function_pool Tools {8d5b40a5-f9a3-4d0e-83dd-90dd282d3cbe} {\n'
+            + '  N::Money total(uint32 n);\n};\n';
+
+        const src = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-src-'));
+        const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-out-'));
+        fs.writeFileSync(path.join(src, 'model.dsm'), model, 'utf-8');
+        fs.writeFileSync(path.join(src, 'pools.dsm'), pools, 'utf-8');
+
+        const notices = [];
+        definitionsMigrate(src, transformation((defs) => {
+            const money = defs.structures().find((s) => s.representation() === 'N::Money');
+            const d = new TransformationDirectives();
+            d.transformType(money, V.Type.UINT64, () => new V.ValueUInt64(0));
+            return d;
+        }), out, { verify: true, onNotice: (line) => notices.push(line) });
+
+        assert.deepEqual(notices, ['[pool-signature-rewritten] Tools::total — return type : '
+            + 'N::Money -> uint64']);
+        assert.ok(fs.readFileSync(path.join(out, 'pools.dsm'), 'utf-8')
+            .includes('uint64 total(uint32 n);'));
+    });
+
     it('transform type reaches a type the schema does not hold', () => {
         // A composite used ONLY in a function-pool signature is in no `Definitions` (pools sit
         // outside persistence) — so it cannot be found by walking the schema. The directive keeps

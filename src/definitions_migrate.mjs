@@ -39,6 +39,88 @@ function simpleName(qualified) {
 }
 
 
+// -- function pools: outside the persistence Definitions, so outside the engine's view -----
+//
+// A pool declares no storage, so the engine never sees one — but its signatures NAME types, and
+// a migration can leave one naming nothing. Two failure modes, and they differ in kind:
+//
+//   * a DROPPED type leaves a signature naming a type that no longer exists. That is membership
+//     of a name in a set, answerable HERE, before any edit, on the parsed DSM model (where a
+//     reference is a `TypeName` — an FQN — whatever the source text writes);
+//   * a RENAMED type can instead make a bare signature reference AMBIGUOUS (two namespaces now
+//     offering one simple name). That is a property of the whole patched tree, answerable only
+//     by resolving it — the parser's job at the verify re-parse, which reports it sited and with
+//     its candidates. Pre-computing it would mean re-implementing the inspector; do not.
+
+// Every named type a signature's return/parameter type references, by FQN. The DSM model nests
+// typed nodes (elementType / keyType / types) down to a leaf reference, so the walk is by shape,
+// not by class — a composite added later is followed, not missed.
+function signatureTypeNames(node, out) {
+    if (typeof node.typeName === 'function') {          // a leaf reference
+        out.push(String(node.typeName()));
+        return;
+    }
+    if (typeof node.types === 'function') {             // tuple / variant
+        for (const t of node.types()) signatureTypeNames(t, out);
+        return;
+    }
+    if (typeof node.keyType === 'function') signatureTypeNames(node.keyType(), out);          // map
+    if (typeof node.elementType === 'function') signatureTypeNames(node.elementType(), out);  // vector / …
+}
+
+// Walk every signature of both pool kinds — `function_pool` (stateless) and
+// `attachment_function_pool` (stateful; the name is a codegen contract about an implicit first
+// parameter, it binds no persistence attachment) — and classify each named type it references:
+// dropped (dangling, refused) or transformType'd (rewritten, worth telling the author).
+function poolFindings(dsmDefs, directives) {
+    const transformed = {};
+    for (const [rid, [newType]] of Object.entries(directives.transformedTypes)) {
+        const name = directives.transformedTypeNames[rid];
+        if (name !== undefined) transformed[name] = newType.representation();
+    }
+
+    const dangling = []; const rewritten = [];
+    const pools = [...dsmDefs.functionPools(), ...dsmDefs.attachmentFunctionPools()];
+    for (const pool of pools) {
+        for (const fn of pool.functions()) {
+            const prototype = fn.prototype();
+            const sites = [['return type', prototype.returnType()]];
+            for (const [name, node] of prototype.parameters()) sites.push([`parameter '${name}'`, node]);
+            for (const [label, node] of sites) {
+                const names = [];
+                signatureTypeNames(node, names);
+                for (const fqn of names) {
+                    const site = [`${pool.name()}::${prototype.name()}`, label, fqn];
+                    if (directives.droppedTypes.has(fqn)) dangling.push(site);
+                    else if (fqn in transformed) rewritten.push([...site, transformed[fqn]]);
+                }
+            }
+        }
+    }
+    return [dangling, rewritten];
+}
+
+// Refuse a migration that would leave a pool signature naming a dropped type, with every site
+// accumulated into one report. A transformType'd type is NOT refused — the signature is rewritten
+// to the new type, which is what was asked — but it silently changes a pool's API, so it is
+// notified instead.
+function refuseDanglingPools(dsmDefs, directives, onNotice) {
+    const [dangling, rewritten] = poolFindings(dsmDefs, directives);
+    if (onNotice) {
+        for (const [signature, label, fqn, next] of rewritten.slice().sort())
+            onNotice(`[pool-signature-rewritten] ${signature} — ${label} : ${fqn} -> ${next}`);
+    }
+    if (!dangling.length) return;
+    const lines = dangling.slice().sort()
+        .map(([signature, label, fqn]) => `  ${signature} — ${label} : ${fqn}`).join('\n');
+    throw new Error('[dropped-type-in-pool] drop_type would leave '
+        + `${dangling.length} function-pool signature(s) naming a type that no longer exists:\n`
+        + lines
+        + '\nA pool is an API, not a document — no policy converts a live call. Edit the signature '
+        + 'by hand, drop the function, or keep the dropped type.');
+}
+
+
 // -- span resolution: a global (content) offset -> (file, local offset) ----------------
 
 // Byte offset of the start of each 1-based line (out[line - 1]).
@@ -741,8 +823,8 @@ function readTree(dsmDir) {
 function parseTree(files, sourceMap = undefined) {
     const builder = new V.DSMBuilder();
     for (const [name, text] of Object.entries(files)) builder.append(name, text);
-    const [report, , definitions] = sourceMap !== undefined ? builder.parse(sourceMap) : builder.parse();
-    return [builder, report, definitions];
+    const [report, dsmDefs, definitions] = sourceMap !== undefined ? builder.parse(sourceMap) : builder.parse();
+    return [builder, report, dsmDefs, definitions];   // dsmDefs holds the pools (outside Definitions)
 }
 
 // Every TransformationDirectives edit now has a source-patch; the whole surface is covered. The
@@ -765,13 +847,14 @@ function refuseUnsupported(directives) {
 
 // Patch the `.dsm` tree under `transformationModule.buildDirectives` and write the result to
 // `outDir`. Returns the parse report.
-export function definitionsMigrate(dsmDir, transformationModule, outDir, { verify = true } = {}) {
+export function definitionsMigrate(dsmDir, transformationModule, outDir,
+    { verify = true, onNotice = undefined } = {}) {
     const files = readTree(dsmDir);
     if (!Object.keys(files).length) throw new Error(`no .dsm files under ${JSON.stringify(dsmDir)}`);
 
     // 1. parse the source, collecting the source-map
     const sourceMap = new V.DSMSourceMap();
-    const [builder, report, sourceDefs] = parseTree(files, sourceMap);
+    const [builder, report, dsmDefs, sourceDefs] = parseTree(files, sourceMap);
     if (report.hasError())
         throw new Error('source .dsm does not parse:\n'
             + report.errors().map((e) => `  ${e.source()}:${e.line()}:${e.pos()} ${e.message()}`).join('\n'));
@@ -780,8 +863,10 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir, { verif
     const directives = transformationModule.buildDirectives(sourceDefs);
     refuseUnsupported(directives);
 
-    // 3. engine oracle: the target definitions (+ the source->target type map)
+    // 3. engine oracle: the target definitions (+ the source->target type map). The engine sees
+    //    the persistence schema only, so the pools are checked here, on the same up-front footing.
     const [rewriter, targetDefs] = DefinitionsRewriter.fromDirectives(sourceDefs, directives);
+    refuseDanglingPools(dsmDefs, directives, onNotice);
 
     // 4. derive span-precise edits and apply them per file
     const resolver = new Resolver(builder);
@@ -797,7 +882,7 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir, { verif
     //    Before the write, not after: a failed verify must leave no target tree behind (the
     //    codemod's twin of the data migration discarding a partial target).
     if (verify) {
-        const [, vreport, vdefs] = parseTree(patched);
+        const [, vreport, , vdefs] = parseTree(patched);
         if (vreport.hasError())
             throw new Error('patched .dsm does not parse:\n'
                 + vreport.errors().map((e) => `  ${e.source()}:${e.line()}:${e.pos()} ${e.message()}`).join('\n'));
