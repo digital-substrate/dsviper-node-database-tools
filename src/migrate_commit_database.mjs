@@ -123,9 +123,9 @@ export function translateOpcode(op, am, rewriter, sourceDefs, ensureBlobs) {
         am.subtractInMap(tgtAtt, tgtKey, path, rewriter.value(op.value()));   // value = set of keys
     } else if (kind === 'XArray_Update') {
         const v = rewriter.value(op.value()); ensureBlobs(v);
-        am.updateInXArray(tgtAtt, tgtKey, path, op.position(), v);
+        am.updateInXarray(tgtAtt, tgtKey, path, op.position(), v);
     } else if (kind === 'XArray_Remove') {
-        am.removeInXArray(tgtAtt, tgtKey, path, op.position());
+        am.removeInXarray(tgtAtt, tgtKey, path, op.position());
     } else {
         throw new Error(`opcode '${kind}' not handled`);
     }
@@ -138,7 +138,7 @@ function addressesDroppedAttachment(op, sourceDefs, dropped) {
     return dropped.size > 0 && dropped.has(op.arguments(sourceDefs)[0].identifier().split('.').pop());
 }
 
-// An insertInXArray(...value) is stored as XArray_Insert (empty position) + XArray_Update (the
+// An insertInXarray(...value) is stored as XArray_Insert (empty position) + XArray_Update (the
 // value) — always adjacent. Re-fuse the pair into one insert. Opcodes addressing a dropped
 // attachment are skipped (the insert PAIR together).
 function replayOpcodes(ops, am, rewriter, sourceDefs, ensureBlobs) {
@@ -158,7 +158,7 @@ function replayOpcodes(ops, am, rewriter, sourceDefs, ensureBlobs) {
             rewriter._selfKey = key;                   // record identity for aggregate hooks
             const [path] = translatePath(rewriter, att.documentType(), op.path());
             const v = rewriter.value(nxt.value()); ensureBlobs(v);
-            am.insertInXArray(rewriter.attachment(att), rewriter.value(key), path,
+            am.insertInXarray(rewriter.attachment(att), rewriter.value(key), path,
                 op.beforePosition(), op.position(), v);
             i += 2;
         } else {
