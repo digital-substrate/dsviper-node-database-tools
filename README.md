@@ -14,7 +14,7 @@ The engine underneath is more general than migration. `DefinitionsRewriter.value
 where the value came from or where it goes. A `Database` / `CommitDatabase` migration is its
 flagship application (what this tool ships); the same engine could transcode — a value decoded from
 JSON, re-encoded as XML — because the whole transform lives in Viper's `Definition` / `Type` /
-`Value` space. New here? Start with the **[migration guide](MIGRATION_GUIDE.md)** — the mental map.
+`Value` space. New here? Start with the **[migration guide](MIGRATION_GUIDE.md)** — and **[SUPPORT.md](SUPPORT.md)** for what a migration can express, what it refuses and why — the mental map.
 
 This package gives you:
 
