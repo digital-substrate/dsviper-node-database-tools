@@ -134,6 +134,19 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(out['shop.dsm'].includes('uint32 legacy_code;'));
     });
 
+    it('retype drops a default authored against the old type', () => {
+        // `quantity` carries `= 1`. A default is part of the runtimeId and was authored under the
+        // source type, so the engine builds the retyped field bare — the patched text must follow,
+        // or the two disagree and the digest (which `run` checks) refuses.
+        const out = run({ 'shop.dsm': SHOP, 'catalog.dsm': CATALOG }, () => {
+            const d = new TransformationDirectives();
+            d.retypeField('Shop::Order', 'quantity', V.Type.UINT64);
+            return d;
+        });
+        assert.ok(out['shop.dsm'].includes('uint64 quantity;'));
+        assert.ok(!out['shop.dsm'].includes('= 1'));
+    });
+
     it('resize vec field', () => {
         const out = run({ 'shop.dsm': SHOP, 'catalog.dsm': CATALOG }, () => {
             const d = new TransformationDirectives();
@@ -414,6 +427,51 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(out['model.dsm'].includes('attachment<N::Person, uint32> orders;'));
     });
 
+    it('attachment addressed by identifier', () => {
+        // `identifier()` (`NS::KeyConcept.name`) is the attachment's identity and the key the
+        // directive API names; the bare local name is the legacy form. Both reach the same
+        // declaration here, because this layer mirrors the engine's lookup.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'concept Person;\n\n'
+            + '"""orders placed"""\n'
+            + 'attachment<Person, uint32> orders;\n\n'
+            + 'attachment<Person, bool> flags;\n\n'
+            + '};\n';
+
+        const out = run({ 'model.dsm': model }, () => {
+            const d = new TransformationDirectives();
+            d.renameAttachment('N::Person.orders', 'purchaseOrders');
+            d.documentAttachment('N::Person.orders', 're-documented');
+            d.dropAttachment('N::Person.flags');
+            d.acceptAttachmentDrops();
+            return d;
+        });
+        assert.ok(out['model.dsm'].includes('"""re-documented"""'));
+        assert.ok(out['model.dsm'].includes('attachment<Person, uint32> purchaseOrders;'));
+        assert.ok(!out['model.dsm'].includes('flags'));
+    });
+
+    it('two attachments of one namespace sharing a name', () => {
+        // An attachment's key concept is part of its identity, so one namespace may hold two
+        // attachments called `orders`. Only the identifier tells them apart — their declarations
+        // report the same `N::orders` type name — so each directive must reach exactly one.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'concept Customer;\nconcept Vendor;\n\n'
+            + 'attachment<Customer, uint32> orders;\n\n'
+            + 'attachment<Vendor, uint32> orders;\n\n'
+            + '};\n';
+
+        const out = run({ 'model.dsm': model }, () => {
+            const d = new TransformationDirectives();
+            d.renameAttachment('N::Vendor.orders', 'supplierOrders');
+            d.documentAttachment('N::Customer.orders', 'placed by a customer');
+            return d;
+        });
+        assert.ok(out['model.dsm'].includes('attachment<Customer, uint32> orders;'));
+        assert.ok(out['model.dsm'].includes('attachment<Vendor, uint32> supplierOrders;'));
+        assert.ok(out['model.dsm'].includes('"""placed by a customer"""'));
+    });
+
     // -- transform_type: a global type substitution at every occurrence, nested included -------
 
     it('transform type primitive named and composite', () => {
@@ -442,5 +500,23 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(body.includes('N::B a;'));                     // named -> fully qualified
         assert.ok(body.includes('vector<N::B> many;'));
         assert.ok(!body.includes('struct A {'));                 // the engine drops the transformed decl
+    });
+
+    it('transform type reaches a type the schema does not hold', () => {
+        // A composite used ONLY in a function-pool signature is in no `Definitions` (pools sit
+        // outside persistence) — so it cannot be found by walking the schema. The directive keeps
+        // its source type's representation next to the runtimeId, which is what makes the source
+        // layer able to name it at all. The digest is blind to pools, so assert on the text.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'struct Order { uint32 id; };\n\n};\n';
+        const tools = 'function_pool Tools {8d5b40a5-f9a3-4d0e-83dd-90dd282d3cbe} {\n'
+            + '  uint32 count(vector<uint32> xs);\n};\n';
+
+        const out = run({ 'model.dsm': model, 'tools.dsm': tools }, () => {
+            const d = new TransformationDirectives();
+            d.transformType(new V.TypeVector(V.Type.UINT32), new V.TypeSet(V.Type.UINT32), (v) => v);
+            return d;
+        });
+        assert.ok(out['tools.dsm'].includes('uint32 count(set<uint32> xs);'));
     });
 });

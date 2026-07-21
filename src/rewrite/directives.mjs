@@ -29,6 +29,11 @@ export class TransformationDirectives {
         this.transposedFields = {};     // src struct repr -> Set(field)   (Mat<c,r> -> Mat<r,c>)
         this.transformedFields = {};    // src struct repr -> { field -> [newType, fn] }  (Class-C hook)
         this.transformedTypes = {};     // src type runtimeId repr -> [newType, fn]  (global Class-C hook)
+        this.transformedTypeNames = {}; // ... -> the source type's representation, kept alongside:
+                                        // a runtimeId is a fingerprint, so a name-based consumer (a
+                                        // source codemod) could otherwise only recover the name by
+                                        // walking the schema — and would miss a type the schema does
+                                        // not reach (a composite used only in a pool signature).
         // documentation authoring (Class A — doc is outside the runtimeId; overrides the
         // source doc the build carries by default). Members named by SOURCE name.
         this.typeDocs = {};             // type repr (struct/enum/concept/club) -> text
@@ -150,7 +155,9 @@ export class TransformationDirectives {
         // Rides the target-directed recursion (the walk visits every node). A field-level
         // `transformField` on the same position OVERRIDES this (resolution: field > type).
         // Same contract as `transformField`: `fn(sourceValue, targetType) -> targetValue`.
-        this.transformedTypes[sourceType.runtimeId().representation()] = [newType, fn];
+        const rid = sourceType.runtimeId().representation();
+        this.transformedTypes[rid] = [newType, fn];
+        this.transformedTypeNames[rid] = sourceType.representation();
     }
 
     // -- enum case shape changes (family 2) -----------------------------------

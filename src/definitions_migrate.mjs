@@ -38,38 +38,6 @@ function simpleName(qualified) {
     return qualified.slice(qualified.lastIndexOf('::') + 2);
 }
 
-// An attachment directive names its target `NS::KeyConcept.Name` (e.g. `Shop::Customer.orders`);
-// its source-map declaration is keyed like any type, `NS::Name` (`Shop::orders`). Map the
-// identifier to that key: namespace before `::`, name after the last `.`.
-function attachmentRepr(identifier) {
-    const namespace = identifier.split('::', 1)[0];
-    return `${namespace}::${identifier.slice(identifier.lastIndexOf('.') + 1)}`;
-}
-
-const ELEM_CAST = {
-    optional: V.TypeOptional, vector: V.TypeVector, set: V.TypeSet,
-    xarray: V.TypeXArray, key: V.TypeKey,
-};
-
-// Record `{runtimeId -> FQN representation}` for `t` and every nested sub-type. The transform_type
-// directive keys its source by runtimeId (the engine's storage key); the source layer is
-// name-based, so this bridges a runtimeId back to the FQN a codemod matches on.
-function walkType(t, acc) {
-    const rid = t.runtimeId().representation();
-    if (!acc.has(rid)) acc.set(rid, t.representation());       // setdefault: do not overwrite
-    const tc = t.typeCode();
-    if (tc in ELEM_CAST) {
-        walkType(ELEM_CAST[tc].cast(t).elementType(), acc);
-    } else if (tc === 'map') {
-        const m = V.TypeMap.cast(t);
-        walkType(m.keyType(), acc);
-        walkType(m.elementType(), acc);
-    } else if (tc === 'tuple' || tc === 'variant') {
-        const cast = tc === 'tuple' ? V.TypeTuple : V.TypeVariant;
-        for (const x of cast.cast(t).types()) walkType(x, acc);
-    }
-}
-
 
 // -- span resolution: a global (content) offset -> (file, local offset) ----------------
 
@@ -227,10 +195,13 @@ function renderFieldLine(name, valueOrType) {
 
 const fkey = (repr, name) => `${repr} ${name}`;
 
-// Build lookup indices over the flat source-map lists.
+// Build lookup indices over the flat source-map lists. A declaration is keyed by its
+// `identifier()` — the source map's own identity for it: `NS::Name` for a type, and
+// `NS::KeyConcept.name` for an attachment, whose key concept is part of its identity (one
+// namespace may hold two attachments of the same name).
 function buildIndex(sourceMap) {
-    const decl = new Map();                                    // repr -> declaration holder
-    for (const d of sourceMap.declarations()) decl.set(reprOf(d.typeName()), d);
+    const decl = new Map();                                    // identifier -> declaration holder
+    for (const d of sourceMap.declarations()) decl.set(d.identifier(), d);
     const fields = [];                                         // [{ repr, name, holder }]
     const fieldMap = new Map();
     for (const f of sourceMap.fields()) {
@@ -276,13 +247,21 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     const { decl, fields, fieldMap, cases, caseMap } = buildIndex(sourceMap);
     const srcStruct = {};
     for (const s of sourceDefs.structures()) srcStruct[s.representation()] = s;
-    // attachment directives are keyed by the attachment's LOCAL name (the engine looks them up as
-    // `identifier().split(".")[-1]`); map that to its declaration key `NS::Name` in the source map.
+    // an attachment directive addresses its target by `identifier()` (`NS::KeyConcept.name`) —
+    // the attachment's identity, and the declaration's key — or, legacy, by the bare local name.
+    // A local name is NOT an identity (one namespace may hold `A.orders` and `B.orders`), so a
+    // legacy key that hits several attachments resolves to none of them here: the engine renames
+    // every homonym, this layer would patch one, and the digest refuses. Map the unambiguous ones.
     const attRepr = {};
+    const ambiguous = new Set();
     for (const a of sourceDefs.attachments()) {
         const id = a.identifier();
-        attRepr[id.slice(id.lastIndexOf('.') + 1)] = attachmentRepr(id);
+        attRepr[id] = id;
+        const local = id.slice(id.lastIndexOf('.') + 1);
+        if (Object.hasOwn(attRepr, local)) ambiguous.add(local);
+        attRepr[local] = id;
     }
+    for (const local of ambiguous) delete attRepr[local];
     let edits = [];
 
     const edit = (span, replacement, tidy = false) => {
@@ -328,20 +307,17 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     }
 
     // transform_type: a GLOBAL type substitution (source -> new_type, at every occurrence incl.
-    // nested). The directive keys the source by runtimeId (engine storage); the source layer is
-    // FQN, so bridge runtimeId -> FQN via sourceDefs' types, then rewrite each type OCCURRENCE
-    // whose FQN matches (sourceMap.types() spans the whole expression, composites included). A
-    // nested source's inner occurrence lands inside the outer replacement — overlap resolution
-    // keeps the outer one. A named source's declaration is dropped by the engine (hooked), so cut it.
+    // nested). The directive keys the source by runtimeId (engine storage) and records the source
+    // type's representation alongside, which is the name this layer matches on — every occurrence
+    // in sourceMap.types() whose representation matches is rewritten (the span covers the whole
+    // expression, composites included). A nested source's inner occurrence lands inside the outer
+    // replacement — overlap resolution keeps the outer one. A named source's declaration is dropped
+    // by the engine (hooked), so cut it.
     if (Object.keys(directives.transformedTypes).length) {
-        const ridToFqn = new Map();
-        for (const named of [...sourceDefs.structures(), ...sourceDefs.enumerations()])
-            ridToFqn.set(named.runtimeId().representation(), named.representation());
-        for (const s of sourceDefs.structures())
-            for (const f of s.fields()) walkType(f.type(), ridToFqn);
         const fqnToNew = new Map();
         for (const [rid, [newType]] of Object.entries(directives.transformedTypes))
-            if (ridToFqn.has(rid)) fqnToNew.set(ridToFqn.get(rid), newType.representation());
+            if (Object.hasOwn(directives.transformedTypeNames, rid))
+                fqnToNew.set(directives.transformedTypeNames[rid], newType.representation());
         for (const occ of sourceMap.types()) {
             const newFqn = fqnToNew.get(occ.representation());
             if (newFqn !== undefined) {
@@ -400,7 +376,17 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
         for (const fname of fnames) {
             const f = fieldMap.get(fkey(structRepr, fname));
             const tf = tgtField.get(renames[fname] ?? fname);
-            if (f !== undefined && tf !== undefined) edit(f.typeSpan(), tf.type().representation(tns) + ' ');
+            if (f === undefined || tf === undefined) continue;
+            edit(f.typeSpan(), tf.type().representation(tns) + ' ');
+            // a default was authored against the OLD type, so the engine does not carry it onto a
+            // type-changed field. Follow the engine (it is the authority on the shape): cut the
+            // `= <literal>` tail — the span from the field name's end to the declaration's end —
+            // or the text would declare a default the target definition does not have.
+            if (tf.defaultValue() === undefined || tf.defaultValue() === null) {
+                const [src, , nstop] = resolve(f.nameSpan());
+                const [, , dstop] = resolve(f.declarationSpan());
+                if (dstop > nstop) edits.push(new Edit(src, nstop, dstop, ''));
+            }
         }
     }
 
@@ -802,12 +788,9 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir, { verif
     const patched = {};
     for (const [name, text] of Object.entries(files)) patched[name] = applyEdits(text, byFile[name]);
 
-    // 5. write the fresh target tree
-    fs.mkdirSync(outDir, { recursive: true });
-    for (const [name, text] of Object.entries(patched))
-        fs.writeFileSync(path.join(outDir, name), text, 'utf-8');
-
-    // 6. verify (oracle): re-parse the patched tree, compare the definitions digest
+    // 5. verify (oracle): re-parse the patched tree IN MEMORY, compare the definitions digest.
+    //    Before the write, not after: a failed verify must leave no target tree behind (the
+    //    codemod's twin of the data migration discarding a partial target).
     if (verify) {
         const [, vreport, vdefs] = parseTree(patched);
         if (vreport.hasError())
@@ -818,6 +801,11 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir, { verif
             throw new Error('verify failed: patched definitions digest '
                 + `${vdefs.hexdigest().slice(0, 12)} != engine target ${targetDigest.slice(0, 12)}`);
     }
+
+    // 6. write the fresh target tree
+    fs.mkdirSync(outDir, { recursive: true });
+    for (const [name, text] of Object.entries(patched))
+        fs.writeFileSync(path.join(outDir, name), text, 'utf-8');
 
     return report;
 }
