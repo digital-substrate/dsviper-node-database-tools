@@ -83,8 +83,33 @@ describe('migrateDatabase', () => {
         const thumb = tdoc.at('thumb', false);
         assert.equal(thumb.representation(), kept.representation());
         assert.deepEqual([...Buffer.from(tgtDb.blob(thumb).encoded())], [10, 20, 30, 40]);
-        assert.equal([...tgtDb.blobIds()].length, 1);
+
+        // the orphan is gone; only the referenced blob survives
+        const surviving = new Set([...tgtDb.blobIds()].map((b) => b.representation()));
+        assert.deepEqual(surviving, new Set([kept.representation()]));
+        assert.ok(!surviving.has(orphan.representation()));
 
         assert.deepEqual(migrateDatabase.verify(src, transformer, tgtDb), { checked: 1, dropped: 0, referencedBlobs: 1 });
+    });
+
+    it('a shared blob is copied once (copy-on-reference dedups)', () => {
+        // two documents referencing the SAME blob copy it once.
+        const src = V.Database.createInMemory();
+        const defs = new V.Definitions();
+        const item = defs.createConcept(NS, 'Item');
+        const docT = struct(defs, 'Doc', [['thumb', T.BLOB_ID]]);
+        defs.createAttachment(NS, 'Items', item, docT);
+        src.extendDefinitions(defs.const());
+        const att = src.definitions().attachments()[0];
+        src.beginTransaction();
+        const shared = src.createBlob(new V.BlobLayout('uchar', 1), new V.ValueBlob(Buffer.from([1, 2, 3])));
+        for (const u of ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'])
+            src.set(att, att.createKey(new V.ValueUUId(u)), new V.ValueStructure(docT, { thumb: shared }));
+        src.commit();
+
+        const { tgtDb, info } = migrate(src, new TransformationDirectives());
+        assert.equal(info.documents, 2);
+        assert.equal(info.blobs, 1);                                    // the shared blob streamed once
+        assert.equal([...tgtDb.blobIds()].length, 1);
     });
 });
