@@ -8,7 +8,8 @@
     ".": "./src/index.mjs"
   },
   "bin": {
-    "dsviper-database-migrate": "bin/database_migrate.mjs"
+    "dsviper-database-migrate": "bin/database_migrate.mjs",
+    "dsviper-definitions-migrate": "bin/definitions_migrate.mjs"
   },
   "files": [
     "bin",
