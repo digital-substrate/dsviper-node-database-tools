@@ -331,19 +331,16 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     for (const s of sourceDefs.structures()) srcStruct[s.representation()] = s;
     // an attachment directive addresses its target by `identifier()` (`NS::KeyConcept.name`) —
     // the attachment's identity, and the declaration's key — or, legacy, by the bare local name.
-    // A local name is NOT an identity (one namespace may hold `A.orders` and `B.orders`), so a
-    // legacy key that hits several attachments resolves to none of them here: the engine renames
-    // every homonym, this layer would patch one, and the digest refuses. Map the unambiguous ones.
+    // A local name is NOT an identity: one namespace may hold `Customer.orders` and
+    // `Vendor.orders`, and the engine's own lookup then hits BOTH. So a key maps to the LIST of
+    // declarations it addresses, and every directive applies to all of them — mirroring the
+    // engine exactly (invariant #1), rather than picking one or refusing.
     const attRepr = {};
-    const ambiguous = new Set();
     for (const a of sourceDefs.attachments()) {
         const id = a.identifier();
-        attRepr[id] = id;
-        const local = id.slice(id.lastIndexOf('.') + 1);
-        if (Object.hasOwn(attRepr, local)) ambiguous.add(local);
-        attRepr[local] = id;
+        (attRepr[id] ??= []).push(id);
+        (attRepr[id.slice(id.lastIndexOf('.') + 1)] ??= []).push(id);
     }
-    for (const local of ambiguous) delete attRepr[local];
     let edits = [];
 
     const edit = (span, replacement, tidy = false) => {
@@ -429,10 +426,13 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
 
     // attachment rename: an attachment lives in declarations() too (the Converter records it), and
     // NOTHING references an attachment (a key is a concept-instance identity, not a foreign key),
-    // so only its declaration name needs patching — no reference sweep. Keyed by local name.
-    for (const [localOld, localNew] of Object.entries(directives.attachmentRenames)) {
-        const d = decl.get(attRepr[localOld] ?? '');
-        if (d !== undefined) edit(d.nameSpan(), localNew);
+    // so only its declaration name needs patching — no reference sweep. Addressed by identifier,
+    // or by a legacy local name, which may name several (see attRepr).
+    for (const [oldId, newId] of Object.entries(directives.attachmentRenames)) {
+        for (const identifier of attRepr[oldId] ?? []) {
+            const d = decl.get(identifier);
+            if (d !== undefined) edit(d.nameSpan(), newId.slice(newId.lastIndexOf('.') + 1));
+        }
     }
 
     // field type change (retype / transform / resize / transpose): replace the type expression with
@@ -516,9 +516,11 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
             if (c !== undefined) docEdit(c.documentationSpan(), c.nameSpan(), text);
         }
     }
-    for (const [local, text] of Object.entries(directives.attachmentDocs)) {
-        const d = decl.get(attRepr[local] ?? '');
-        if (d !== undefined) docEdit(d.documentationSpan(), d.blockSpan(), text);
+    for (const [key, text] of Object.entries(directives.attachmentDocs)) {
+        for (const identifier of attRepr[key] ?? []) {
+            const d = decl.get(identifier);
+            if (d !== undefined) docEdit(d.documentationSpan(), d.blockSpan(), text);
+        }
     }
 
     // add a field: render it and splice before the struct's closing brace
@@ -563,9 +565,11 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     // too; nothing references one, so a cut dangles nothing)
     for (const typeRepr of directives.droppedTypes)
         if (decl.has(typeRepr)) edit(decl.get(typeRepr).blockSpan(), '', true);
-    for (const local of directives.droppedAttachments) {
-        const d = decl.get(attRepr[local] ?? '');
-        if (d !== undefined) edit(d.blockSpan(), '', true);
+    for (const key of directives.droppedAttachments) {
+        for (const identifier of attRepr[key] ?? []) {
+            const d = decl.get(identifier);
+            if (d !== undefined) edit(d.blockSpan(), '', true);
+        }
     }
 
     // drop field: cut the whole field declaration
@@ -731,11 +735,11 @@ function matchBrace(text, openPos) {
 
 function relocateMovedTypes(edits, directives, decl, sourceMap, resolve, files, attRepr) {
     // types AND attachments move the same way (both are declarations); an attachment names its
-    // target by LOCAL name, resolved to the declaration key NS::Name via attRepr.
+    // target by identifier (or a legacy local name), resolved to declaration keys via attRepr.
     const moves = [];
     for (const [t, ns] of Object.entries(directives.typeNamespaces)) moves.push([t, ns]);
-    for (const [i, ns] of Object.entries(directives.attachmentNamespaces))
-        if (i in attRepr) moves.push([attRepr[i], ns]);
+    for (const [key, ns] of Object.entries(directives.attachmentNamespaces))
+        for (const identifier of attRepr[key] ?? []) moves.push([identifier, ns]);
     if (!moves.length) return edits;
     const blocks = new Map();                                  // namespace uuid -> [[file, uuidStop]]
     for (const ns of sourceMap.nameSpaces()) {

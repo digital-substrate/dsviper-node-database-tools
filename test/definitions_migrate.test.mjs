@@ -472,6 +472,25 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(out['model.dsm'].includes('"""placed by a customer"""'));
     });
 
+    it('a local name addresses every homonym like the engine', () => {
+        // The bare local name is the legacy key and it is NOT an identity: the engine's lookup
+        // hits every attachment carrying that name, so this layer must patch every matching
+        // declaration — mirroring the engine, which is what the digest then agrees with.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'concept Customer;\nconcept Vendor;\n\n'
+            + 'attachment<Customer, uint32> orders;\n\n'
+            + 'attachment<Vendor, uint32> orders;\n\n'
+            + '};\n';
+
+        const out = run({ 'model.dsm': model }, () => {
+            const d = new TransformationDirectives();
+            d.renameAttachment('orders', 'placed');        // ambiguous on purpose
+            return d;
+        });
+        assert.ok(out['model.dsm'].includes('attachment<Customer, uint32> placed;'));
+        assert.ok(out['model.dsm'].includes('attachment<Vendor, uint32> placed;'));
+    });
+
     // -- transform_type: a global type substitution at every occurrence, nested included -------
 
     it('transform type primitive named and composite', () => {
