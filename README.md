@@ -45,7 +45,8 @@ This package gives you:
 
 See the **[migration guide](MIGRATION_GUIDE.md)** for how to *think* about a migration, and
 **[REWRITE.md](REWRITE.md)** for how the rewrite *works* and how to extend it — the target-directed
-engine, the chain of proof, the invariants, and the code map.
+engine, the chain of proof, the invariants, and the code map. For the DSM-source codemod
+(`definitionsMigrate`), **[DEFINITIONS_MIGRATE.md](DEFINITIONS_MIGRATE.md)**.
 
 ## Install
 
