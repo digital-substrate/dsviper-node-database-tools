@@ -30,7 +30,7 @@
     "prepublishOnly": "npm test"
   },
   "peerDependencies": {
-    "@digitalsubstrate/dsviper": ">=1.2.5"
+    "@digitalsubstrate/dsviper": ">=1.2.8"
   },
   "keywords": [
     "dsviper",
