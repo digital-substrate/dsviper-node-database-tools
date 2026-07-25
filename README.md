@@ -54,7 +54,7 @@ The runtime `@digitalsubstrate/dsviper` is on npm; this tool is not (yet). Insta
 clone this repo, and run the script from the repo — the same shape as `dsviper-tools`:
 
 ```bash
-npm install "@digitalsubstrate/dsviper@>=1.2.5"
+npm install "@digitalsubstrate/dsviper@>=1.2.8 <2"
 git clone <repo> dsviper-node-database-tools
 cd dsviper-node-database-tools
 node bin/database_migrate.mjs <migration> <source> <target>
@@ -246,3 +246,11 @@ that rolls back on failure, and verifies itself *opcode by opcode* plus the DAG 
 also drove additive binding fixes, found by exercising the `encoded=false` typed-value path.
 
 Requires `@digitalsubstrate/dsviper` >= 1.2.5.
+
+## Runtime dependency
+
+At runtime, this project depends on the `@digitalsubstrate/dsviper` package
+(distributed on npm), which is **proprietary** (`license` field
+`LicenseRef-DigitalSubstrate-Commercial-1.2`). See
+[https://www.npmjs.com/package/@digitalsubstrate/dsviper](https://www.npmjs.com/package/@digitalsubstrate/dsviper)
+for the package's licensing posture and contact information.
