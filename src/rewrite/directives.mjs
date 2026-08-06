@@ -8,38 +8,38 @@
 
 export class TransformationDirectives {
     constructor() {
-        this.typeRenames = {};          // src repr -> tgt repr                 (family 1)
-        this.fieldRenames = {};         // src struct repr -> { src field -> tgt field }
-        this.caseRenames = {};          // src enum repr  -> { src case  -> tgt case }
-        this.droppedFields = {};        // src struct repr -> Set(field)         (family 2)
-        this.retypedFields = {};        // src struct repr -> { src field -> [newType, policy] }
-        this.addedFields = {};          // src struct repr -> [[name, defaultOrType, derive]]
-        this.removedCases = {};         // src enum repr -> { case -> policy }
-        this.attachmentRenames = {};    // src identifier -> new identifier
-        this.addedCases = {};           // src enum repr -> [names]              (Class A, at end)
-        this.caseOrder = {};            // src enum repr -> [target names in order]
-        this.fieldOrder = {};           // src struct repr -> [target names in order]
-        this.namespaceNames = {};       // src ns uuid repr -> new display name   (representation only)
-        this.namespaceUuids = {};       // src ns uuid repr -> new ValueUUId      (runtimeId only)
-        this.typeNamespaces = {};       // type repr -> target NameSpace   (per-definition move; split/merge)
-        this.attachmentNamespaces = {}; // attachment identifier -> target NameSpace
+        this.typeRenames = Object.create(null);          // src repr -> tgt repr                 (family 1)
+        this.fieldRenames = Object.create(null);         // src struct repr -> { src field -> tgt field }
+        this.caseRenames = Object.create(null);          // src enum repr  -> { src case  -> tgt case }
+        this.droppedFields = Object.create(null);        // src struct repr -> Set(field)         (family 2)
+        this.retypedFields = Object.create(null);        // src struct repr -> { src field -> [newType, policy] }
+        this.addedFields = Object.create(null);          // src struct repr -> [[name, defaultOrType, derive]]
+        this.removedCases = Object.create(null);         // src enum repr -> { case -> policy }
+        this.attachmentRenames = Object.create(null);    // src identifier -> new identifier
+        this.addedCases = Object.create(null);           // src enum repr -> [names]              (Class A, at end)
+        this.caseOrder = Object.create(null);            // src enum repr -> [target names in order]
+        this.fieldOrder = Object.create(null);           // src struct repr -> [target names in order]
+        this.namespaceNames = Object.create(null);       // src ns uuid repr -> new display name   (representation only)
+        this.namespaceUuids = Object.create(null);       // src ns uuid repr -> new ValueUUId      (runtimeId only)
+        this.typeNamespaces = Object.create(null);       // type repr -> target NameSpace   (per-definition move; split/merge)
+        this.attachmentNamespaces = Object.create(null); // attachment identifier -> target NameSpace
         this.collisionPolicy = 'fail';  // Map key collision: 'fail' | 'first' | 'last'
         this.documentDropsAccepted = false;   // explicit sign-off that drop-record may DELETE documents
-        this.resizedFields = {};        // src struct repr -> { field -> [kind, dims, fill, onShrink] }
-        this.transposedFields = {};     // src struct repr -> Set(field)   (Mat<c,r> -> Mat<r,c>)
-        this.transformedFields = {};    // src struct repr -> { field -> [newType, fn] }  (Class-C hook)
-        this.transformedTypes = {};     // src type runtimeId repr -> [newType, fn]  (global Class-C hook)
-        this.transformedTypeNames = {}; // ... -> the source type's representation, kept alongside:
+        this.resizedFields = Object.create(null);        // src struct repr -> { field -> [kind, dims, fill, onShrink] }
+        this.transposedFields = Object.create(null);     // src struct repr -> Set(field)   (Mat<c,r> -> Mat<r,c>)
+        this.transformedFields = Object.create(null);    // src struct repr -> { field -> [newType, fn] }  (Class-C hook)
+        this.transformedTypes = Object.create(null);     // src type runtimeId repr -> [newType, fn]  (global Class-C hook)
+        this.transformedTypeNames = Object.create(null); // ... -> the source type's representation, kept alongside:
                                         // a runtimeId is a fingerprint, so a name-based consumer (a
                                         // source codemod) could otherwise only recover the name by
                                         // walking the schema — and would miss a type the schema does
                                         // not reach (a composite used only in a pool signature).
         // documentation authoring (Class A — doc is outside the runtimeId; overrides the
         // source doc the build carries by default). Members named by SOURCE name.
-        this.typeDocs = {};             // type repr (struct/enum/concept/club) -> text
-        this.fieldDocs = {};            // src struct repr -> { src field -> text }
-        this.caseDocs = {};             // src enum repr  -> { src case  -> text }
-        this.attachmentDocs = {};       // src attachment identifier -> text
+        this.typeDocs = Object.create(null);             // type repr (struct/enum/concept/club) -> text
+        this.fieldDocs = Object.create(null);            // src struct repr -> { src field -> text }
+        this.caseDocs = Object.create(null);             // src enum repr  -> { src case  -> text }
+        this.attachmentDocs = Object.create(null);       // src attachment identifier -> text
         // definition-level drops (the co-direction of the additive build)
         this.droppedTypes = new Set();  // type repr (struct/enum/concept/club) to NOT recreate
         this.droppedAttachments = new Set();   // attachment identifier to NOT recreate (+ delete its docs)
@@ -50,11 +50,11 @@ export class TransformationDirectives {
     renameType(oldRepr, newRepr) { this.typeRenames[oldRepr] = newRepr; }
 
     renameField(structRepr, oldName, newName) {
-        (this.fieldRenames[structRepr] ??= {})[oldName] = newName;
+        (this.fieldRenames[structRepr] ??= Object.create(null))[oldName] = newName;
     }
 
     renameCase(enumRepr, oldName, newName) {
-        (this.caseRenames[enumRepr] ??= {})[oldName] = newName;
+        (this.caseRenames[enumRepr] ??= Object.create(null))[oldName] = newName;
     }
 
     renameAttachment(oldId, newId) { this.attachmentRenames[oldId] = newId; }   // named Map<Key,Doc>
@@ -114,7 +114,7 @@ export class TransformationDirectives {
 
     retypeField(structRepr, name, newType, policy = null) {
         // policy (lossy retypes): 'fail' (default) | 'saturate' | ['default', Value]
-        (this.retypedFields[structRepr] ??= {})[name] = [newType, policy];
+        (this.retypedFields[structRepr] ??= Object.create(null))[name] = [newType, policy];
     }
 
     // -- Vec/Mat DIMENSION changes (family 2). Named explicitly, never inferred from the
@@ -124,13 +124,13 @@ export class TransformationDirectives {
     //    grow fills the new cells, shrink drops the trailing ones.
     resizeVecField(structRepr, field, size, { fill = 'zero', onShrink = 'fail' } = {}) {
         // fill: 'zero' (born-default) | a numeric scalar. onShrink: 'fail' | 'accept'.
-        (this.resizedFields[structRepr] ??= {})[field] = ['vec', [size], fill, onShrink];
+        (this.resizedFields[structRepr] ??= Object.create(null))[field] = ['vec', [size], fill, onShrink];
     }
 
     resizeMatField(structRepr, field, columns, rows, { fill = 'identity', onShrink = 'fail' } = {}) {
         // fill: 'identity' (born-default: extend the diagonal with 1) | 'zero' | a numeric
         //       scalar. onShrink: 'fail' | 'accept' (accept the dropped rows/columns).
-        (this.resizedFields[structRepr] ??= {})[field] = ['mat', [columns, rows], fill, onShrink];
+        (this.resizedFields[structRepr] ??= Object.create(null))[field] = ['mat', [columns, rows], fill, onShrink];
     }
 
     transposeMatField(structRepr, field) {
@@ -146,7 +146,7 @@ export class TransformationDirectives {
         // author's transform. It owns its loss model: it returns a valid target value (the
         // engine validates it), throws `Unrepresentable` to drop the record, or throws to
         // refuse. The engine refuses anything the hook does not produce as a valid target value.
-        (this.transformedFields[structRepr] ??= {})[field] = [newType, fn];
+        (this.transformedFields[structRepr] ??= Object.create(null))[field] = [newType, fn];
     }
 
     transformType(sourceType, newType, fn) {
@@ -167,7 +167,7 @@ export class TransformationDirectives {
 
     removeCase(enumRepr, caseName, policy) {
         // policy: 'fail' (default) | ['map-case', name] | 'drop-record'
-        (this.removedCases[enumRepr] ??= {})[caseName] = policy;
+        (this.removedCases[enumRepr] ??= Object.create(null))[caseName] = policy;
     }
 
     // -- documentation authoring (Class A; overrides the carried source doc) ---
@@ -176,9 +176,9 @@ export class TransformationDirectives {
     //    these set/override it. Members named by SOURCE name (as renames do); `text=""` clears.
     documentType(typeRepr, text) { this.typeDocs[typeRepr] = text; }   // struct/enum/concept/club
 
-    documentField(structRepr, field, text) { (this.fieldDocs[structRepr] ??= {})[field] = text; }
+    documentField(structRepr, field, text) { (this.fieldDocs[structRepr] ??= Object.create(null))[field] = text; }
 
-    documentCase(enumRepr, caseName, text) { (this.caseDocs[enumRepr] ??= {})[caseName] = text; }
+    documentCase(enumRepr, caseName, text) { (this.caseDocs[enumRepr] ??= Object.create(null))[caseName] = text; }
 
     documentAttachment(attachmentId, text) { this.attachmentDocs[attachmentId] = text; }
 
