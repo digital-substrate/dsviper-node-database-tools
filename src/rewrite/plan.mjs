@@ -147,7 +147,7 @@ export function plan(sourceDefs, directives) {
         const simple = (d.typeRenames[full] ?? full).split('::').pop();
         const nsUuid = named.typeName().nameSpace().uuid().representation();
         const remapped = d.namespaceUuids[nsUuid];
-        const slot = `${remapped !== undefined ? remapped.representation() : nsUuid} ${simple}`;
+        const slot = `${remapped !== undefined ? remapped.representation() : nsUuid}\u0000${simple}`;
         if (slots.has(slot))
             warnings.push(`non-injective type mapping: '${full}' and '${slots.get(slot)}' both map to target '${simple}' in the same namespace — the runtime will refuse the duplicate at build (and a variant with both as arms would be illegal); give them distinct target names`);
         else slots.set(slot, full);

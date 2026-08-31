@@ -275,7 +275,7 @@ function renderFieldLine(name, valueOrType) {
 
 // -- edit derivation: directives + source-map -> edits ---------------------------------
 
-const fkey = (repr, name) => `${repr} ${name}`;
+const fkey = (repr, name) => `${repr}\u0000${name}`;
 
 // Build lookup indices over the flat source-map lists. A declaration is keyed by its
 // `identifier()` — the source map's own identity for it: `NS::Name` for a type, and
