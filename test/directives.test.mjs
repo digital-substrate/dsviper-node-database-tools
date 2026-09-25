@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
 describe('TransformationDirectives', () => {
@@ -32,10 +34,10 @@ describe('dsviper typed read path (encoded=false)', () => {
         const doc = new V.ValueStructure(order, { qty: 42, note: 'x' });
 
         assert.equal(doc.at('qty'), 42);                         // default: native
-        const typed = doc.at('qty', false);                      // typed Value
+        const typed = /** @type {D.ValueInt32} */ (doc.at('qty', false));   // typed Value
         assert.equal(typeof typed.typeCode, 'function');
         assert.equal(typed.typeCode(), 'int32');
         assert.equal(typed.encoded(), 42);
-        assert.equal(doc.at('note', false).typeCode(), 'string');
+        assert.equal(/** @type {D.Value} */ (doc.at('note', false)).typeCode(), 'string');
     });
 });

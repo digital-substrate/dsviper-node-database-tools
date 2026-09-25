@@ -10,11 +10,21 @@ import {
     plan, formatPlan, DiagnosticSink, formatReport,
 } from '../src/rewrite/index.mjs';
 import * as migrateDatabase from '../src/migrate_database.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @typedef {Parameters<TransformationDirectives['retypeField']>[3]} RetypePolicy */
+/** @typedef {Array<[string, D.Type]>} Fields */
+/** @import { PlanChange } from '../src/rewrite/plan.mjs' */
 
 const T = V.Type;
 const NS_SHOP = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Shop');
 const NS_DEMO = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {D.NameSpace} ns
+ * @param {string} name
+ * @param {Fields} fields
+ */
 function makeStruct(defs, ns, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
@@ -26,9 +36,10 @@ function makeStruct(defs, ns, name, fields) {
 // test_plan.py — the static plan report (schema-only pre-validation)
 // ---------------------------------------------------------------------------
 describe('plan (static plan report)', () => {
-    const struct = (defs, name, fields) => makeStruct(defs, NS_SHOP, name, fields);
+    const struct = (/** @type {D.Definitions} */ defs, /** @type {string} */ name, /** @type {Fields} */ fields) => makeStruct(defs, NS_SHOP, name, fields);
 
     // Shop::Order with qty=int64, amount=double, label/legacy/note=string — the base schema.
+    /** @returns {[D.Definitions, D.TypeStructure]} */
     function defsOrder() {
         const defs = new V.Definitions();
         const order = struct(defs, 'Order', [
@@ -37,7 +48,7 @@ describe('plan (static plan report)', () => {
         return [defs, order];
     }
 
-    const sites = (report) => Object.fromEntries(report.changes.map((c) => [c.site, c]));
+    const sites = (/** @type {ReturnType<typeof plan>} */ report) => Object.fromEntries(report.changes.map((c) => [c.site, c]));
 
     it('classifies A / B and lossy', () => {
         const [defs, order] = defsOrder();
@@ -137,7 +148,7 @@ describe('plan (static plan report)', () => {
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'f', new V.TypeSet(T.INT64));     // no policy
         const report = plan(defs, d);
-        const rt = report.changes.find((c) => c.kind === 'retype_field');
+        const rt = /** @type {PlanChange} */ (report.changes.find((c) => c.kind === 'retype_field'));
         assert.equal(rt.class, 'A');
         assert.equal(rt.loss, false);
         assert.ok(!report.warnings.some((w) => w.includes('missing policy')));
@@ -150,7 +161,7 @@ describe('plan (static plan report)', () => {
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'f', new V.TypeSet(T.INT32));     // no policy
         const report = plan(defs, d);
-        const rt = report.changes.find((c) => c.kind === 'retype_field');
+        const rt = /** @type {PlanChange} */ (report.changes.find((c) => c.kind === 'retype_field'));
         assert.equal(rt.class, 'B');
         assert.ok(report.warnings.some((w) => w.includes('missing policy')));
     });
@@ -161,7 +172,7 @@ describe('plan (static plan report)', () => {
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'f', new V.TypeOptional(T.INT64));  // no policy
         const report = plan(defs, d);
-        const rt = report.changes.find((c) => c.kind === 'retype_field');
+        const rt = /** @type {PlanChange} */ (report.changes.find((c) => c.kind === 'retype_field'));
         assert.equal(rt.class, 'A');
     });
 });
@@ -172,6 +183,11 @@ describe('plan (static plan report)', () => {
 // ---------------------------------------------------------------------------
 
 // Rewrite `sv` under a fresh sink; return the aggregate report.
+/**
+ * @param {DefinitionsRewriter} rewriter
+ * @param {D.Value} sv
+ * @param {number} [maxSamples]
+ */
 function observe(rewriter, sv, maxSamples = 5) {
     const sink = new DiagnosticSink(maxSamples);
     rewriter._sink = sink;
@@ -181,6 +197,11 @@ function observe(rewriter, sv, maxSamples = 5) {
 }
 
 // Assert exactly one lossy site and return it.
+/**
+ * @template S
+ * @param {{ sites: S[] }} report
+ * @returns {S}
+ */
 function only(report) {
     const sites = report.sites;
     assert.equal(sites.length, 1, `expected 1 site, got ${JSON.stringify(sites)}`);
@@ -188,6 +209,13 @@ function only(report) {
 }
 
 describe('DiagnosticSink — leaf emissions', () => {
+    /**
+     * @param {D.Type} srcLeaf
+     * @param {D.Type} tgtLeaf
+     * @param {RetypePolicy} policy
+     * @param {string} [field]
+     * @returns {[DefinitionsRewriter, D.TypeStructure]}
+     */
     function retypeRewriter(srcLeaf, tgtLeaf, policy, field = 'n') {
         const src = new V.Definitions();
         const s = makeStruct(src, NS_DEMO, 'W', [[field, srcLeaf]]);
@@ -326,6 +354,7 @@ describe('DiagnosticSink — Vec/Mat emissions', () => {
 });
 
 describe('DiagnosticSink — enum and container emissions', () => {
+    /** @returns {[D.Definitions, D.TypeEnumeration]} */
     function enumDefs() {
         const src = new V.Definitions();
         const ed = new V.TypeEnumerationDescriptor('Mode');
@@ -374,7 +403,8 @@ describe('DiagnosticSink — enum and container emissions', () => {
         const rep = observe(r, new V.ValueStructure(s, { tags: st }));
         const ops = new Set(rep.sites.map((x) => x.op));
         assert.ok(ops.has('set-collapse'));
-        const collapse = rep.sites.find((x) => x.op === 'set-collapse');
+        // present: the assertion above found the op
+        const collapse = /** @type {import('../src/rewrite/report.mjs').SiteRecord} */ (rep.sites.find((x) => x.op === 'set-collapse'));
         assert.equal(collapse.site, 'Demo::R.tags');
         assert.equal(collapse.policy, 'first');
     });
@@ -479,11 +509,11 @@ describe('DiagnosticSink — dry-run diagnostics', () => {
 describe('DiagnosticSink — dropped count independent of sample cap', () => {
     // `dropped` counts elided values (after=null) per finding as they arrive — independent of
     // maxSamples, so it is exact even when no samples are kept at all (maxSamples=0).
-    const feed = (maxSamples) => {
+    const feed = (/** @type {number} */ maxSamples) => {
         const sink = new DiagnosticSink(maxSamples);
         sink({ site: 'S.f', op: 'drop', policy: 'drop-record', before: 'x', after: null });
         sink({ site: 'S.f', op: 'drop', policy: 'drop-record', before: 'y', after: null });
-        sink({ site: 'S.g', op: 'narrow', policy: 'saturate', before: 99999, after: 32767 });
+        sink({ site: 'S.g', op: 'narrow', policy: 'saturate', before: '99999', after: '32767' });   // samples are rendered text
         return sink.report().summary;
     };
 

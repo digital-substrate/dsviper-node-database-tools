@@ -9,15 +9,19 @@ import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { DefinitionsRewriter } from '../src/rewrite/index.mjs';
 import * as migrateDatabase from '../src/migrate_database.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/** @param {D.Definitions} defs @param {string} name @param {Array<[string, D.Type]>} fields */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
 
+/** @param {D.Database} srcDb @param {TransformationDirectives} directives */
 function migrate(srcDb, directives) {
     const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(srcDb.definitions(), directives);
     const tgtDb = V.Database.createInMemory();
@@ -46,7 +50,7 @@ describe('migrateDatabase', () => {
 
         assert.equal(info.documents, 1);
         const tatt = tgtDb.definitions().attachments()[0];
-        const tkey = tgtDb.keys(tatt).at(0, false);
+        const tkey = /** @type {D.ValueKey} */ (tgtDb.keys(tatt).at(0, false));
         const doc = tgtDb.get(tatt, tkey);
         assert.ok(!doc.isNil());
         assert.equal(V.ValueStructure.cast(doc.unwrap(false)).at('count'), 5);
@@ -78,11 +82,11 @@ describe('migrateDatabase', () => {
         assert.deepEqual(info, { documents: 1, dropped: 0, blobs: 1 });
 
         const tatt = tgtDb.definitions().attachments()[0];
-        const tdoc = V.ValueStructure.cast(tgtDb.get(tatt, tgtDb.keys(tatt).at(0, false)).unwrap(false));
+        const tdoc = V.ValueStructure.cast(tgtDb.get(tatt, /** @type {D.ValueKey} */ (tgtDb.keys(tatt).at(0, false))).unwrap(false));
         assert.equal(tdoc.at('title'), 'x');
-        const thumb = tdoc.at('thumb', false);
+        const thumb = /** @type {D.ValueBlobId} */ (tdoc.at('thumb', false));
         assert.equal(thumb.representation(), kept.representation());
-        assert.deepEqual([...Buffer.from(tgtDb.blob(thumb).encoded())], [10, 20, 30, 40]);
+        assert.deepEqual([...Buffer.from(/** @type {D.ValueBlob} */ (tgtDb.blob(thumb)).encoded())], [10, 20, 30, 40]);
 
         // the orphan is gone; only the referenced blob survives
         const surviving = new Set([...tgtDb.blobIds()].map((b) => b.representation()));

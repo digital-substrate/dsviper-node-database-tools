@@ -6,19 +6,32 @@ import assert from 'node:assert/strict';
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { DefinitionsRewriter } from '../src/rewrite/index.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { CollisionPolicy } from '../src/rewrite/directives.mjs' */
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 const INST = new V.ValueUUId('11111111-1111-1111-1111-111111111111');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {Array<[string, D.Type]>} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
+/**
+ * @param {DefinitionsRewriter} tr
+ * @param {D.Definitions} target
+ * @param {D.Value} value
+ * @param {D.Type} sourceType
+ */
 const rt = (tr, target, value, sourceType) =>
     V.Value.decode(V.Value.encode(value), tr.mapType(sourceType), target.const());
-const flavor = (k) => {
+const flavor = (/** @type {D.ValueKey} */ k) => {
     const tk = k.typeKey();
     return tk.isConcept() ? 'concept' : tk.isClub() ? 'club' : tk.isAnyConcept() ? 'any-concept' : '?';
 };
@@ -27,7 +40,7 @@ describe('key flavours preserved under a concept rename', () => {
     const setup = () => {
         const src = new V.Definitions();
         const parent = src.createConcept(NS, 'Material');
-        const concept = src.createConcept(NS, 'MaterialStandard', parent);
+        const concept = src.createConcept(NS, 'MaterialStandard', null, parent);
         const club = src.createClub(NS, 'Certified');
         src.createMembership(club, concept);
         const d = new TransformationDirectives();
@@ -37,18 +50,18 @@ describe('key flavours preserved under a concept rename', () => {
     };
     it('concept key preserved + remapped', () => {
         const { concept, tr } = setup();
-        const out = tr.value(V.ValueKey.create(concept, INST));
+        const out = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(concept, INST)));
         assert.equal(flavor(out), 'concept');
         assert.equal(out.typeConcept().representation(), 'Demo::StandardMaterial');
     });
     it('any-concept key flavour preserved', () => {
         const { concept, tr } = setup();
-        const out = tr.value(V.ValueKey.create(concept, INST).toAnyConceptKey());
+        const out = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(concept, INST).toAnyConceptKey()));
         assert.equal(flavor(out), 'any-concept');
     });
     it('club key flavour preserved', () => {
         const { concept, club, tr } = setup();
-        const out = tr.value(V.ValueKey.create(concept, INST).toClubKey(club));
+        const out = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(concept, INST).toClubKey(club)));
         assert.equal(flavor(out), 'club');
     });
 });
@@ -77,7 +90,7 @@ describe('Any / Tuple / Variant', () => {
         const tup = new V.ValueTuple(new V.TypeTuple([T.INT32, sEl]), [5, new V.ValueStructure(sEl, { x: 7 })]);
         const varr = new V.ValueVariant(new V.TypeVariant([T.INT32, sEl]));
         varr.wrap(new V.ValueStructure(sEl, { x: 9 }), sEl);
-        const r = tr.value(new V.ValueStructure(sRt, { t: tup, var: varr }));
+        const r = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(sRt, { t: tup, var: varr })));
         const rtup = V.ValueTuple.cast(r.at('t', false));
         assert.equal(rtup.at(0), 5);
         assert.equal(V.ValueStructure.cast(rtup.at(1, false)).at('xx'), 7);
@@ -105,6 +118,10 @@ describe('XArray + Set collapse + enum', () => {
     });
 
     it('Set element collapse under a non-injective enum merge: refused, then policied', () => {
+        /**
+         * @param {CollisionPolicy | null} winner
+         * @returns {[DefinitionsRewriter, D.TypeStructure, D.ValueSet]}
+         */
         const mk = (winner) => {
             const src = new V.Definitions();
             const ed = new V.TypeEnumerationDescriptor('Mode');
@@ -123,7 +140,7 @@ describe('XArray + Set collapse + enum', () => {
         const [trF, sF, stF] = mk(null);
         assert.throws(() => trF.value(new V.ValueStructure(sF, { modes: stF })));
         const [trL, sL, stL] = mk('last');
-        const out = V.ValueSet.cast(trL.value(new V.ValueStructure(sL, { modes: stL })).at('modes', false));
+        const out = V.ValueSet.cast(/** @type {D.ValueStructure} */ (trL.value(new V.ValueStructure(sL, { modes: stL }))).at('modes', false));
         assert.equal(out.size(), 1);
         assert.equal(V.ValueEnumeration.cast(out.at(0, false)).name(), 'New');
     });

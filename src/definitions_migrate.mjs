@@ -26,14 +26,42 @@ import path from 'node:path';
 import V from './dsviper.mjs';
 import { DefinitionsRewriter } from './rewrite/index.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { TransformationDirectives } from './rewrite/directives.mjs' */
+
+/**
+ * A transformation module: the migration file both `database_migrate` and `definitions_migrate` load.
+ * @typedef {object} TransformationModule
+ * @property {(sourceDefs: D.DefinitionsConst) => TransformationDirectives} buildDirectives builds the edit script from the source definitions
+ */
+
+/**
+ * A DSM type node, read by shape: a leaf reference has `typeName`, a tuple/variant `types`, a map
+ * `keyType`, and every other composite `elementType`.
+ * @typedef {D.DSMType & {
+ *     typeName?: () => D.TypeName,
+ *     types?: () => D.DSMType[],
+ *     keyType?: () => D.DSMType,
+ *     elementType?: () => D.DSMType,
+ * }} DSMTypeNode
+ */
+
+/** @typedef {[string, number, number]} ResolvedSpan [sourceFile, localStart, localStop) */
+
+/** @typedef {(span: D.DSMSourceSpan | null) => ResolvedSpan} Resolve */
+
+/** @typedef {Record<string, string>} Files source file name -> its text */
+
 // -- name helpers ----------------------------------------------------------------------
 
 // The qualified `NS::Name` representation of a binding TypeName.
+/** @param {D.TypeName} typeName */
 function reprOf(typeName) {
     return `${typeName.nameSpace().name()}::${typeName.name()}`;
 }
 
 // The simple (unqualified) name of a `NS::Name` representation.
+/** @param {string} qualified */
 function simpleName(qualified) {
     return qualified.slice(qualified.lastIndexOf('::') + 2);
 }
@@ -55,6 +83,7 @@ function simpleName(qualified) {
 // Every named type a signature's return/parameter type references, by FQN. The DSM model nests
 // typed nodes (elementType / keyType / types) down to a leaf reference, so the walk is by shape,
 // not by class — a composite added later is followed, not missed.
+/** @param {DSMTypeNode} node @param {string[]} out */
 function signatureTypeNames(node, out) {
     if (typeof node.typeName === 'function') {          // a leaf reference
         out.push(String(node.typeName()));
@@ -72,21 +101,32 @@ function signatureTypeNames(node, out) {
 // `attachment_function_pool` (stateful; the name is a codegen contract about an implicit first
 // parameter, it binds no persistence attachment) — and classify each named type it references:
 // dropped (dangling, refused) or transformType'd (rewritten, worth telling the author).
+/**
+ * @param {D.DSMDefinitions} dsmDefs
+ * @param {TransformationDirectives} directives
+ * @returns {[string[][], string[][]]}
+ */
 function poolFindings(dsmDefs, directives) {
+    /** @type {Record<string, string>} */
     const transformed = {};
     for (const [rid, [newType]] of Object.entries(directives.transformedTypes)) {
         const name = directives.transformedTypeNames[rid];
         if (name !== undefined) transformed[name] = newType.representation();
     }
 
-    const dangling = []; const rewritten = [];
+    /** @type {string[][]} */
+    const dangling = [];
+    /** @type {string[][]} */
+    const rewritten = [];
     const pools = [...dsmDefs.functionPools(), ...dsmDefs.attachmentFunctionPools()];
     for (const pool of pools) {
         for (const fn of pool.functions()) {
             const prototype = fn.prototype();
+            /** @type {Array<[string, D.DSMType]>} */
             const sites = [['return type', prototype.returnType()]];
             for (const [name, node] of prototype.parameters()) sites.push([`parameter '${name}'`, node]);
             for (const [label, node] of sites) {
+                /** @type {string[]} */
                 const names = [];
                 signatureTypeNames(node, names);
                 for (const fqn of names) {
@@ -104,6 +144,11 @@ function poolFindings(dsmDefs, directives) {
 // accumulated into one report. A transformType'd type is NOT refused — the signature is rewritten
 // to the new type, which is what was asked — but it silently changes a pool's API, so it is
 // notified instead.
+/**
+ * @param {D.DSMDefinitions} dsmDefs
+ * @param {TransformationDirectives} directives
+ * @param {((message: string) => void) | undefined} onNotice
+ */
 function refuseDanglingPools(dsmDefs, directives, onNotice) {
     const [dangling, rewritten] = poolFindings(dsmDefs, directives);
     if (onNotice) {
@@ -124,6 +169,7 @@ function refuseDanglingPools(dsmDefs, directives, onNotice) {
 // -- span resolution: a global (content) offset -> (file, local offset) ----------------
 
 // Byte offset of the start of each 1-based line (out[line - 1]).
+/** @param {string} text */
 function lineStarts(text) {
     const starts = [0];
     for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
@@ -131,6 +177,7 @@ function lineStarts(text) {
 }
 
 // Last index of `ch` in text[start, end), or -1 (a bounded rfind for a single char).
+/** @param {string} text @param {string} ch @param {number} start @param {number} end */
 function rfindChar(text, ch, start, end) {
     for (let i = end - 1; i >= start; i--) if (text[i] === ch) return i;
     return -1;
@@ -141,21 +188,31 @@ function rfindChar(text, ch, start, end) {
 // is the content offset of its first line; the local offset is `global - base` (valid across
 // multi-line spans).
 class Resolver {
+    /** @param {D.DSMBuilder} builder */
     constructor(builder) {
         const contentStarts = lineStarts(builder.content());
+        /** @type {Record<string, number>} */
         const firstLine = {};
         for (const part of builder.parts()) {
             const src = part.source();
             const prev = (src in firstLine) ? firstLine[src] : part.lineStart();
             firstLine[src] = Math.min(prev, part.lineStart());
         }
+        /** @type {Record<string, number>} */
         this._base = {};
         for (const [src, line] of Object.entries(firstLine)) this._base[src] = contentStarts[line - 1];
         this._builder = builder;
     }
 
+    /**
+     * @param {D.DSMSourceSpan | null} span
+     * @returns {ResolvedSpan}
+     */
     resolve(span) {
-        const source = this._builder.part(span.line()).source();
+        if (span === null) throw new Error('[internal] no source span to resolve');
+        const part = this._builder.part(span.line());
+        if (part === undefined) throw new Error(`[internal] no source part holds line ${span.line()}`);
+        const source = part.source();
         const base = this._base[source];
         return [source, span.start() - base, span.stop() - base + 1];   // [start, stop) half-open
     }
@@ -168,6 +225,13 @@ class Resolver {
 // statement terminator and leave no dangling line.
 
 class Edit {
+    /**
+     * @param {string} source
+     * @param {number} start
+     * @param {number} stop
+     * @param {string} replacement
+     * @param {boolean} [tidy]
+     */
     constructor(source, start, stop, replacement, tidy = false) {
         this.source = source;
         this.start = start;
@@ -177,11 +241,13 @@ class Edit {
     }
 }
 
+/** @param {string} ch */
 const isSpace = (ch) => ch === ' ' || ch === '\t';
 
 // Widen [start, stop) of a deletion to swallow the trailing statement terminator and leave no
 // dangling blank line: eat a following `;` (past any spaces), then the rest of the line through
 // its newline, and the indentation back to the line start when nothing else remains before it.
+/** @param {string} text @param {number} start @param {number} stop @returns {[number, number]} */
 function tidyCut(text, start, stop) {
     const n = text.length;
     let end = stop;
@@ -205,6 +271,7 @@ function tidyCut(text, start, stop) {
 // A case lives in a comma-separated list, not a `;`-terminated statement. Eat a following comma
 // (and its trailing blank line) if present; otherwise eat a preceding comma (removing the list's
 // last case), plus any leading indentation.
+/** @param {string} text @param {number} start @param {number} stop @returns {[number, number]} */
 function tidyCutCase(text, start, stop) {
     const n = text.length;
     let end = stop;
@@ -226,8 +293,10 @@ function tidyCutCase(text, start, stop) {
 // Drop any edit strictly contained within another edit's span: a wholesale replacement (a retyped
 // field's type, a dropped block) subsumes the finer edits inside it (e.g. a reference rename that
 // falls within a rewritten type).
+/** @param {Edit[]} edits */
 function resolveOverlaps(edits) {
     const replacements = edits.filter((e) => e.stop > e.start);
+    /** @type {Edit[]} */
     const kept = [];
     for (const e of replacements) {
         if (replacements.some((o) => o !== e && o.source === e.source     // offsets per-file — compare within one
@@ -241,6 +310,7 @@ function resolveOverlaps(edits) {
 
 // Splice edits into one file's text, right-to-left. Assumes non-overlapping (see resolveOverlaps);
 // insertions (start == stop) splice cleanly.
+/** @param {string} text @param {Edit[]} edits */
 function applyEdits(text, edits) {
     const sorted = edits.slice().sort((a, b) => (b.start - a.start) || (b.stop - a.stop));
     for (const e of sorted) {
@@ -258,11 +328,17 @@ function applyEdits(text, edits) {
 // over a throwaway one-field struct, so literal formatting (floats, uuids, containers) is the
 // engine's, not ours. `valueOrType` is a default Value (static add) or a Type (a `derive=` field,
 // which carries no default).
+/** @param {string} name @param {D.Type | D.Value} valueOrType */
 function renderFieldLine(name, valueOrType) {
     const ns = new V.NameSpace(new V.ValueUUId('dede0000-0000-4000-8000-000000000001'), 'T');
     const d = new V.Definitions();
     const ds = new V.TypeStructureDescriptor('F');
-    ds.addField(name, valueOrType, '');
+    // addField accepts a Type or a default Value; its two declared overloads each take one, so a
+    // union argument is typed against the one signature both share. The payload is a default the
+    // descriptor accepts: the engine already built the target field from it.
+    /** @type {{ addField(fieldName: string, typeOrValue: D.Type | D.DefaultValue, documentation: string): void }} */
+    const descriptor = ds;
+    descriptor.addField(name, /** @type {D.Type | D.DefaultValue} */ (valueOrType), '');
     d.createStructure(ns, ds);
     const dsm = V.DSMDefinitions.fromDefinitions(d.const()).toDsm();
     for (const line of dsm.split('\n')) {
@@ -275,23 +351,30 @@ function renderFieldLine(name, valueOrType) {
 
 // -- edit derivation: directives + source-map -> edits ---------------------------------
 
+/** @param {string} repr @param {string} name */
 const fkey = (repr, name) => `${repr}\u0000${name}`;
 
 // Build lookup indices over the flat source-map lists. A declaration is keyed by its
 // `identifier()` — the source map's own identity for it: `NS::Name` for a type, and
 // `NS::KeyConcept.name` for an attachment, whose key concept is part of its identity (one
 // namespace may hold two attachments of the same name).
+/** @param {D.DSMSourceMap} sourceMap */
 function buildIndex(sourceMap) {
+    /** @type {Map<string, D.DSMSourceDeclaration>} */
     const decl = new Map();                                    // identifier -> declaration holder
     for (const d of sourceMap.declarations()) decl.set(d.identifier(), d);
+    /** @type {Array<{ repr: string, name: string, holder: D.DSMSourceField }>} */
     const fields = [];                                         // [{ repr, name, holder }]
+    /** @type {Map<string, D.DSMSourceField>} */
     const fieldMap = new Map();
     for (const f of sourceMap.fields()) {
         const repr = reprOf(f.structure());
         fields.push({ repr, name: f.name(), holder: f });
         fieldMap.set(fkey(repr, f.name()), f);
     }
+    /** @type {Array<{ repr: string, name: string, holder: D.DSMSourceCase }>} */
     const cases = [];
+    /** @type {Map<string, D.DSMSourceCase>} */
     const caseMap = new Map();
     for (const c of sourceMap.cases()) {
         const repr = reprOf(c.enumeration());
@@ -304,6 +387,13 @@ function buildIndex(sourceMap) {
 // An insertion of `member` just before a declaration block's closing `}`, indented like the
 // existing members. `memberSpan` (an existing member) supplies the indentation; `joinComma`
 // prefixes `, ` onto the previous (comma-list) member.
+/**
+ * @param {D.DSMSourceSpan | null} declSpan
+ * @param {string} member
+ * @param {Resolve} resolve
+ * @param {Files} files
+ * @param {{ memberSpan?: D.DSMSourceSpan | null, joinComma?: boolean }} [options]
+ */
 function insertBeforeClose(declSpan, member, resolve, files, { memberSpan = null, joinComma = false } = {}) {
     const [src, bstart, bstop] = resolve(declSpan);
     const text = files[src];
@@ -325,8 +415,17 @@ function insertBeforeClose(declSpan, member, resolve, files, { memberSpan = null
     return new Edit(src, brace, brace, memberIndent + member + '\n' + braceIndent);
 }
 
+/**
+ * @param {TransformationDirectives} directives
+ * @param {D.DSMSourceMap} sourceMap
+ * @param {Resolve} resolve
+ * @param {Files} files
+ * @param {DefinitionsRewriter} rewriter
+ * @param {D.DefinitionsConst} sourceDefs
+ */
 function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     const { decl, fields, fieldMap, cases, caseMap } = buildIndex(sourceMap);
+    /** @type {Record<string, D.TypeStructure>} */
     const srcStruct = {};
     for (const s of sourceDefs.structures()) srcStruct[s.representation()] = s;
     // an attachment directive addresses its target by `identifier()` (`NS::KeyConcept.name`) —
@@ -335,14 +434,17 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     // `Vendor.orders`, and the engine's own lookup then hits BOTH. So a key maps to the LIST of
     // declarations it addresses, and every directive applies to all of them — mirroring the
     // engine exactly (invariant #1), rather than picking one or refusing.
+    /** @type {Record<string, string[]>} */
     const attRepr = {};
     for (const a of sourceDefs.attachments()) {
         const id = a.identifier();
         (attRepr[id] ??= []).push(id);
         (attRepr[id.slice(id.lastIndexOf('.') + 1)] ??= []).push(id);
     }
+    /** @type {Edit[]} */
     let edits = [];
 
+    /** @param {D.DSMSourceSpan | null} span @param {string} replacement @param {boolean} [tidy] */
     const edit = (span, replacement, tidy = false) => {
         if (span === null) return;
         const [source, start, stop] = resolve(span);
@@ -351,7 +453,8 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
 
     // type rename: patch the declaration name (its references are handled below)
     for (const [srcRepr, dstRepr] of Object.entries(directives.typeRenames)) {
-        if (decl.has(srcRepr)) edit(decl.get(srcRepr).nameSpan(), simpleName(dstRepr));
+        const d = decl.get(srcRepr);
+        if (d !== undefined) edit(d.nameSpan(), simpleName(dstRepr));
     }
 
     // unified reference pass: every resolved type-reference — in a struct field AND in a
@@ -393,6 +496,7 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     // replacement — overlap resolution keeps the outer one. A named source's declaration is dropped
     // by the engine (hooked), so cut it.
     if (Object.keys(directives.transformedTypes).length) {
+        /** @type {Map<string, string>} */
         const fqnToNew = new Map();
         for (const [rid, [newType]] of Object.entries(directives.transformedTypes))
             if (Object.hasOwn(directives.transformedTypeNames, rid))
@@ -404,8 +508,10 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
                 edits.push(new Edit(src, start, stop, newFqn));
             }
         }
-        for (const fqn of fqnToNew.keys())                     // a named source's declaration is dropped
-            if (decl.has(fqn)) edit(decl.get(fqn).blockSpan(), '', true);
+        for (const fqn of fqnToNew.keys()) {                   // a named source's declaration is dropped
+            const d = decl.get(fqn);
+            if (d !== undefined) edit(d.blockSpan(), '', true);
+        }
     }
 
     // field rename
@@ -438,20 +544,23 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
     // field type change (retype / transform / resize / transpose): replace the type expression with
     // the engine-computed target type — the single oracle for the shape. The Class-C `fn` is
     // data-only; the dimension/policy directives carry no DSM text.
+    /** @type {Map<string, Set<string>>} */
     const typeChanged = new Map();                             // struct repr -> Set(field)
     for (const group of [directives.retypedFields, directives.transformedFields,
         directives.resizedFields, directives.transposedFields]) {
         for (const [structRepr, entry] of Object.entries(group)) {
             const names = entry instanceof Set ? [...entry] : Object.keys(entry);
-            if (!typeChanged.has(structRepr)) typeChanged.set(structRepr, new Set());
-            for (const n of names) typeChanged.get(structRepr).add(n);
+            let changed = typeChanged.get(structRepr);
+            if (changed === undefined) { changed = new Set(); typeChanged.set(structRepr, changed); }
+            for (const n of names) changed.add(n);
         }
     }
     for (const [structRepr, fnames] of typeChanged) {
         const s = srcStruct[structRepr];
         if (s === undefined) continue;
-        const tgt = rewriter.typeMap[s.runtimeId().representation()];
-        if (tgt === undefined) continue;
+        const named = rewriter.typeMap[s.runtimeId().representation()];
+        if (named === undefined) continue;
+        const tgt = /** @type {D.TypeStructure} */ (named);    // a structure maps to a structure
         const tns = tgt.typeName().nameSpace();
         const tgtField = new Map(tgt.fields().map((tf) => [tf.name(), tf]));
         const renames = directives.fieldRenames[structRepr] ?? {};
@@ -488,6 +597,7 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
 
     // documentation authoring: replace an existing docstring, else insert one before the
     // declaration (Class A — a doc change is outside the runtimeId, but carried faithfully).
+    /** @param {D.DSMSourceSpan | null} docSpan @param {D.DSMSourceSpan | null} anchorSpan @param {string} text */
     const docEdit = (docSpan, anchorSpan, text) => {
         const block = renderDoc(text);
         if (docSpan !== null) {                                // replace (or clear) an existing docstring
@@ -563,8 +673,10 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
 
     // drop type / drop attachment: cut the whole declaration block (attachments are declarations
     // too; nothing references one, so a cut dangles nothing)
-    for (const typeRepr of directives.droppedTypes)
-        if (decl.has(typeRepr)) edit(decl.get(typeRepr).blockSpan(), '', true);
+    for (const typeRepr of directives.droppedTypes) {
+        const d = decl.get(typeRepr);
+        if (d !== undefined) edit(d.blockSpan(), '', true);
+    }
     for (const key of directives.droppedAttachments) {
         for (const identifier of attRepr[key] ?? []) {
             const d = decl.get(identifier);
@@ -601,6 +713,7 @@ function derive(directives, sourceMap, resolve, files, rewriter, sourceDefs) {
 // -- reorder: rewrite a declaration's member region in the target order --------------------
 
 // The leading whitespace of the line containing `pos`.
+/** @param {string} text @param {number} pos */
 function lineIndent(text, pos) {
     const lineBegin = rfindChar(text, '\n', 0, pos) + 1;
     let i = lineBegin;
@@ -609,6 +722,7 @@ function lineIndent(text, pos) {
 }
 
 // A field's full text extent: [docstring-or-declaration start, past the `;`].
+/** @param {D.DSMSourceField} f @param {Resolve} resolve @param {Files} files @returns {ResolvedSpan} */
 function fieldUnit(f, resolve, files) {
     const [src, dstart, dstop] = resolve(f.declarationSpan());
     const text = files[src];
@@ -621,6 +735,7 @@ function fieldUnit(f, resolve, files) {
 }
 
 // A case's full text extent: [docstring-or-name start, name end] (the comma is excluded).
+/** @param {D.DSMSourceCase} c @param {Resolve} resolve @param {Files} files @returns {ResolvedSpan} */
 function caseUnit(c, resolve, files) {
     const [src, nstart, nstop] = resolve(c.nameSpan());
     const doc = c.documentationSpan();
@@ -630,24 +745,34 @@ function caseUnit(c, resolve, files) {
 
 // The text of files[src][start:stop] with the edits falling inside it applied (rebased to local
 // offsets) — a member carries its own rename/retype into its new slot.
+/** @param {Edit[]} edits @param {string} src @param {number} start @param {number} stop @param {Files} files */
 function bake(edits, src, start, stop, files) {
     const inside = edits.filter((e) => e.source === src && start <= e.start && e.stop <= stop);
     return applyEdits(files[src].slice(start, stop),
         inside.map((e) => new Edit(e.source, e.start - start, e.stop - start, e.replacement, e.tidy)));
 }
 
+/** @param {Set<string>} a @param {Set<string>} b */
 function setsEqual(a, b) {
     if (a.size !== b.size) return false;
     for (const x of a) if (!b.has(x)) return false;
     return true;
 }
 
+/**
+ * @param {Edit[]} edits
+ * @param {TransformationDirectives} directives
+ * @param {Map<string, D.DSMSourceDeclaration>} decl
+ * @param {Array<{ repr: string, name: string, holder: D.DSMSourceField }>} fields
+ * @param {Resolve} resolve
+ * @param {Files} files
+ */
 function reorderFields(edits, directives, decl, fields, resolve, files) {
     for (const [structRepr, order] of Object.entries(directives.fieldOrder)) {
         const d = decl.get(structRepr);
         if (d === undefined) continue;
         const units = fields.filter((x) => x.repr === structRepr)
-            .map((x) => [x.holder, fieldUnit(x.holder, resolve, files)]);
+            .map((x) => /** @type {[D.DSMSourceField, ResolvedSpan]} */ ([x.holder, fieldUnit(x.holder, resolve, files)]));
         if (!units.length) continue;
         const renames = directives.fieldRenames[structRepr] ?? {};
         const dropped = directives.droppedFields[structRepr] ?? new Set();
@@ -655,6 +780,7 @@ function reorderFields(edits, directives, decl, fields, resolve, files) {
         const rstart = Math.min(...units.map((u) => u[1][1]));
         const rend = Math.max(...units.map((u) => u[1][2]));
         const blockStop = resolve(d.blockSpan())[2];
+        /** @type {Map<string, string>} */
         const texts = new Map();
         for (const [f, [s, us, ue]] of units)
             if (!dropped.has(f.name())) texts.set(renames[f.name()] ?? f.name(), bake(edits, s, us, ue, files));
@@ -669,12 +795,20 @@ function reorderFields(edits, directives, decl, fields, resolve, files) {
     return edits;
 }
 
+/**
+ * @param {Edit[]} edits
+ * @param {TransformationDirectives} directives
+ * @param {Map<string, D.DSMSourceDeclaration>} decl
+ * @param {Array<{ repr: string, name: string, holder: D.DSMSourceCase }>} cases
+ * @param {Resolve} resolve
+ * @param {Files} files
+ */
 function reorderCases(edits, directives, decl, cases, resolve, files) {
     for (const [enumRepr, order] of Object.entries(directives.caseOrder)) {
         const d = decl.get(enumRepr);
         if (d === undefined) continue;
         const units = cases.filter((x) => x.repr === enumRepr)
-            .map((x) => [x.holder, caseUnit(x.holder, resolve, files)]);
+            .map((x) => /** @type {[D.DSMSourceCase, ResolvedSpan]} */ ([x.holder, caseUnit(x.holder, resolve, files)]));
         if (!units.length) continue;
         const renames = directives.caseRenames[enumRepr] ?? {};
         const removed = directives.removedCases[enumRepr] ?? {};
@@ -682,6 +816,7 @@ function reorderCases(edits, directives, decl, cases, resolve, files) {
         const rstart = Math.min(...units.map((u) => u[1][1]));
         const rend = Math.max(...units.map((u) => u[1][2]));
         const blockStop = resolve(d.blockSpan())[2];
+        /** @type {Map<string, string>} */
         const texts = new Map();
         for (const [c, [s, us, ue]] of units)
             if (!(c.name() in removed)) texts.set(renames[c.name()] ?? c.name(), bake(edits, s, us, ue, files));
@@ -697,6 +832,7 @@ function reorderCases(edits, directives, decl, cases, resolve, files) {
 
 // Remove edits superseded by a region rewrite: everything inside the member region (baked into the
 // member texts), and the add-member insertions past it (their text is now in order).
+/** @param {Edit[]} edits @param {string} src @param {number} rstart @param {number} rend @param {number} blockStop */
 function dropRegionEdits(edits, src, rstart, rend, blockStop) {
     return edits.filter((e) => !(e.source === src && (
         (rstart <= e.start && e.stop <= rend)
@@ -706,6 +842,7 @@ function dropRegionEdits(edits, src, rstart, rend, blockStop) {
 // Index of the `}` matching the `{` at openPos, counting braces but skipping string and docstring
 // bodies (a `"has { brace"` default or a docstring must not throw off the depth). A `{uuid}`
 // default is self-balancing, so it needs no care.
+/** @param {string} text @param {number} openPos */
 function matchBrace(text, openPos) {
     let depth = 0;
     let i = openPos;
@@ -733,21 +870,34 @@ function matchBrace(text, openPos) {
     return -1;
 }
 
+/**
+ * @param {Edit[]} edits
+ * @param {TransformationDirectives} directives
+ * @param {Map<string, D.DSMSourceDeclaration>} decl
+ * @param {D.DSMSourceMap} sourceMap
+ * @param {Resolve} resolve
+ * @param {Files} files
+ * @param {Record<string, string[]>} attRepr
+ */
 function relocateMovedTypes(edits, directives, decl, sourceMap, resolve, files, attRepr) {
     // types AND attachments move the same way (both are declarations); an attachment names its
     // target by identifier (or a legacy local name), resolved to declaration keys via attRepr.
+    /** @type {Array<[string, D.NameSpace]>} */
     const moves = [];
     for (const [t, ns] of Object.entries(directives.typeNamespaces)) moves.push([t, ns]);
     for (const [key, ns] of Object.entries(directives.attachmentNamespaces))
         for (const identifier of attRepr[key] ?? []) moves.push([identifier, ns]);
     if (!moves.length) return edits;
+    /** @type {Map<string, Array<[string, number]>>} */
     const blocks = new Map();                                  // namespace uuid -> [[file, uuidStop]]
     for (const ns of sourceMap.nameSpaces()) {
         const [src, , ustop] = resolve(ns.uuidSpan());
         const key = ns.nameSpace().uuid().representation();
-        if (!blocks.has(key)) blocks.set(key, []);
-        blocks.get(key).push([src, ustop]);
+        let held = blocks.get(key);
+        if (held === undefined) { held = []; blocks.set(key, held); }
+        held.push([src, ustop]);
     }
+    /** @type {Map<string, string>} */
     const targetOf = new Map();                                // repr -> its target ns uuid
     for (const [t, ns] of moves) targetOf.set(t, ns.uuid().representation());
     for (const [typeRepr, targetNs] of moves) {
@@ -800,6 +950,7 @@ function relocateMovedTypes(edits, directives, decl, sourceMap, resolve, files, 
 }
 
 // A DSM docstring block for `text` (`"""…"""`), or "" to clear it.
+/** @param {string} text */
 function renderDoc(text) {
     if (!text) return '';
     if (text.includes('\n')) return '"""\n' + text + '\n"""';
@@ -809,6 +960,7 @@ function renderDoc(text) {
 // Prefix every line of a docstring block with `indent` and a trailing newline. It is spliced at
 // the anchor's line start (before the anchor's own indent), so the anchor line keeps its existing
 // indentation — no trailing indent here, or it would double.
+/** @param {string} block @param {string} indent */
 function reindent(block, indent) {
     return block.split('\n').map((line) => indent + line + '\n').join('');
 }
@@ -816,7 +968,9 @@ function reindent(block, indent) {
 
 // -- the migration ---------------------------------------------------------------------
 
+/** @param {string} dsmDir @returns {Files} */
 function readTree(dsmDir) {
+    /** @type {Files} */
     const files = {};
     for (const name of fs.readdirSync(dsmDir).sort()) {
         if (name.endsWith('.dsm')) files[name] = fs.readFileSync(path.join(dsmDir, name), 'utf-8');
@@ -824,6 +978,11 @@ function readTree(dsmDir) {
     return files;
 }
 
+/**
+ * @param {Files} files
+ * @param {D.DSMSourceMap} [sourceMap]
+ * @returns {[D.DSMBuilder, D.DSMParseReport, D.DSMDefinitions | undefined, D.DefinitionsConst | undefined]}
+ */
 function parseTree(files, sourceMap = undefined) {
     const builder = new V.DSMBuilder();
     for (const [name, text] of Object.entries(files)) builder.append(name, text);
@@ -834,12 +993,14 @@ function parseTree(files, sourceMap = undefined) {
 // Every TransformationDirectives edit now has a source-patch; the whole surface is covered. The
 // guard stays (empty) as the fail-closed seam: a directive added upstream lands here first, refused
 // up front rather than left to the digest oracle to reject after the fact.
+/** @type {Record<string, string>} */
 const UNSUPPORTED = {};
 
+/** @param {TransformationDirectives} directives */
 function refuseUnsupported(directives) {
     const reasons = [];
     for (const [attr, why] of Object.entries(UNSUPPORTED)) {
-        const v = directives[attr];
+        const v = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (directives))[attr];
         const nonEmpty = v instanceof Set ? v.size : (v && typeof v === 'object' ? Object.keys(v).length : v);
         if (nonEmpty) reasons.push(why);
     }
@@ -851,6 +1012,14 @@ function refuseUnsupported(directives) {
 
 // Patch the `.dsm` tree under `transformationModule.buildDirectives` and write the result to
 // `outDir`. Returns the parse report.
+/**
+ * Patch the `.dsm` tree under `dsmDir` with the migration's directives and write it to `outDir`.
+ * @param {string} dsmDir the source `.dsm` tree, read only
+ * @param {TransformationModule} transformationModule the migration module (the same file the data migration loads)
+ * @param {string} outDir the directory the patched tree is written to
+ * @param {{ verify?: boolean, onNotice?: (message: string) => void }} [options] `verify`: re-parse the patched tree and compare its definitions digest to the engine's target (default true); `onNotice`: told of each rewritten pool signature
+ * @returns {D.DSMParseReport} the parse report of the source tree
+ */
 export function definitionsMigrate(dsmDir, transformationModule, outDir,
     { verify = true, onNotice = undefined } = {}) {
     const files = readTree(dsmDir);
@@ -862,6 +1031,8 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir,
     if (report.hasError())
         throw new Error('source .dsm does not parse:\n'
             + report.errors().map((e) => `  ${e.source()}:${e.line()}:${e.pos()} ${e.message()}`).join('\n'));
+    if (dsmDefs === undefined || sourceDefs === undefined)
+        throw new Error('source .dsm parsed without error but yielded no definitions');
 
     // 2. the SAME transformation module, from the source definitions
     const directives = transformationModule.buildDirectives(sourceDefs);
@@ -874,11 +1045,14 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir,
 
     // 4. derive span-precise edits and apply them per file
     const resolver = new Resolver(builder);
+    /** @type {Resolve} */
     const resolve = (span) => resolver.resolve(span);
     const edits = derive(directives, sourceMap, resolve, files, rewriter, sourceDefs);
+    /** @type {Record<string, Edit[]>} */
     const byFile = {};
     for (const name of Object.keys(files)) byFile[name] = [];
     for (const e of edits) byFile[e.source].push(e);
+    /** @type {Files} */
     const patched = {};
     for (const [name, text] of Object.entries(files)) patched[name] = applyEdits(text, byFile[name]);
 
@@ -890,6 +1064,7 @@ export function definitionsMigrate(dsmDir, transformationModule, outDir,
         if (vreport.hasError())
             throw new Error('patched .dsm does not parse:\n'
                 + vreport.errors().map((e) => `  ${e.source()}:${e.line()}:${e.pos()} ${e.message()}`).join('\n'));
+        if (vdefs === undefined) throw new Error('patched .dsm parsed without error but yielded no definitions');
         const targetDigest = targetDefs.const().hexdigest();
         if (vdefs.hexdigest() !== targetDigest)
             throw new Error('verify failed: patched definitions digest '

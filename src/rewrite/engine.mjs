@@ -11,8 +11,27 @@
 
 import V from '../dsviper.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { TransformationDirectives, RetypePolicy, ResizeSpec, ShrinkPolicy, FillScalar, ValueHook, FieldHook } from './directives.mjs' */
+/** @import { Finding, FindingPolicy } from './report.mjs' */
+
+/**
+ * A named (registry) type: the kinds a type rename / namespace move / drop addresses.
+ * @typedef {D.TypeConcept | D.TypeClub | D.TypeEnumeration | D.TypeStructure} NamedType
+ */
+/**
+ * What the engine renders into a diagnostic sample: a Value, a native scalar, or null/undefined
+ * for an elided/absent image.
+ * @typedef {D.OutputValue | D.Value | undefined} Sampleable
+ */
+/**
+ * The per-element conversion `_mapElements` applies.
+ * @typedef {(element: D.Value, elementType: D.Type, site: string | null) => D.Value} ElementFn
+ */
+
 // How many parameters a hook declares — decides whether it gets the `ctx` (an extra trailing
 // slot). A local hook stays clean; a non-local one opts in by declaring it.
+/** @param {Function} fn */
 const hookParamCount = (fn) => fn.length;
 
 // Handed to a hook that declares a slot for it. Bundles the read-only source view
@@ -22,6 +41,7 @@ const hookParamCount = (fn) => fn.length;
 // migration to a fetched source value; `followRefs=false` (default) blanks the source view for
 // the nested call, bounding depth and breaking any cross-document reference cycle.
 class HookContext {
+    /** @param {DefinitionsRewriter} rewriter */
     constructor(rewriter) { this._rw = rewriter; }
 
     get hasSourceView() { return this._rw._sourceView !== null; }
@@ -48,6 +68,13 @@ class HookContext {
         return this._rw._selfKey;
     }
 
+    /**
+     * Apply the same migration to a fetched source value.
+     * @param {D.Value} value a source-domain value
+     * @param {D.Type} [targetType] the target type (derived when omitted)
+     * @param {{ followRefs?: boolean }} [options] `followRefs` keeps the source view for the nested call
+     * @returns {D.Value}
+     */
     rewrite(value, targetType = undefined, { followRefs = false } = {}) {
         const rw = this._rw;
         if (followRefs) return rw.value(value, targetType);
@@ -59,6 +86,11 @@ class HookContext {
     }
 }
 
+/**
+ * The context a hook that declares a slot for it receives (see `HookContext`).
+ * @typedef {HookContext} RewriteHookContext
+ */
+
 // representationally-lossless leaf widenings — automatic (Class A)
 export const WIDENING = new Set([
     'int8>int16', 'int8>int32', 'int8>int64', 'int16>int32', 'int16>int64', 'int32>int64',
@@ -69,6 +101,7 @@ export const WIDENING = new Set([
 const PRIMITIVES = new Set(['void', 'bool', 'uint8', 'uint16', 'uint32', 'uint64',
     'int8', 'int16', 'int32', 'int64', 'float', 'double',
     'blob_id', 'commit_id', 'uuid', 'string', 'blob', 'vec', 'mat']);
+/** @type {Record<string, [bigint, bigint]>} */
 export const INT_RANGE = {   // BigInt bounds (JS int64/uint64 are bigint)
     int8: [-128n, 127n], int16: [-32768n, 32767n],
     int32: [-2147483648n, 2147483647n], int64: [-(2n ** 63n), 2n ** 63n - 1n],
@@ -80,10 +113,19 @@ const FLOATS = new Set(['float', 'double']);
 // than crashing in the numeric path (which assumes a scalar operand).
 const COMPOSITES = new Set(['struct', 'enum', 'concept', 'club', 'optional', 'vector', 'set',
     'map', 'xarray', 'tuple', 'variant', 'key', 'any']);
+/** @param {string} tc */
 const IS64 = (tc) => tc === 'int64' || tc === 'uint64';
+/**
+ * @param {string} tc
+ * @param {bigint} n
+ */
 const coerce = (tc, n) => (IS64(tc) ? n : Number(n));          // bigint for 64-bit int, else number
 // numeric native for a target leaf: a float/double target takes a JS number; an int target
 // takes a bigint for 64-bit, else a number. (Widening a float→double must NOT go through BigInt.)
+/**
+ * @param {string} tc
+ * @param {string | number | bigint | boolean} native
+ */
 const numericNative = (tc, native) =>
     (tc === 'double' || tc === 'float') ? Number(native) : coerce(tc, BigInt(native));
 
@@ -93,6 +135,11 @@ const numericNative = (tc, native) =>
 // conversion at fixed dims (widen A / narrow B), the Vector bridge (flatten Vec/Mat→Vector A,
 // element type T preserved; Vector→Vec length-fit B; Vector→Mat refused), and refused (a bare
 // dimension change, Vec↔Mat, or a bridge that also changes the element type).
+/**
+ * @param {D.Type} srcType
+ * @param {D.Type} newType
+ * @returns {['A' | 'B' | 'refused', string] | null}
+ */
 export function vecmatRetypeClass(srcType, newType) {
     const sc = srcType.typeCode(); const tc = newType.typeCode();
     if (!['vec', 'mat'].includes(sc) && !['vec', 'mat'].includes(tc)) return null;
@@ -148,10 +195,20 @@ export function vecmatRetypeClass(srcType, newType) {
 // a map, key) type changes: widen / format / same-kind → 'A' (lossless), a narrowing element →
 // 'B' (needs a policy). Recurses for nested containers; a map weighs both key and value (either
 // narrowing => B). Returns 'A' / 'B', or null if not a same-kind container retype.
+/**
+ * @param {D.Type} srcType
+ * @param {D.Type} newType
+ * @returns {'A' | 'B' | null}
+ */
 export function containerElementRetypeClass(srcType, newType) {
     const sc = srcType.typeCode(); const tc = newType.typeCode();
     if (sc !== tc || !['set', 'vector', 'xarray', 'map', 'optional', 'tuple'].includes(sc)) return null;
 
+    /**
+     * @param {D.Type} se
+     * @param {D.Type} te
+     * @returns {'A' | 'B'}
+     */
     const elemClass = (se, te) => {
         const nested = containerElementRetypeClass(se, te);        // nested container -> recurse
         if (nested !== null) return nested;
@@ -170,7 +227,7 @@ export function containerElementRetypeClass(srcType, newType) {
         if (st.length !== ts.length) return null;                 // an arity change is a shape change, not this
         return st.some((a, i) => elemClass(a, ts[i]) === 'B') ? 'B' : 'A';
     }
-    const getter = { set: V.TypeSet, vector: V.TypeVector, xarray: V.TypeXArray, optional: V.TypeOptional }[sc];
+    const getter = { set: V.TypeSet, vector: V.TypeVector, xarray: V.TypeXArray, optional: V.TypeOptional }[/** @type {'set' | 'vector' | 'xarray' | 'optional'} */ (sc)];
     return elemClass(getter.cast(srcType).elementType(), getter.cast(newType).elementType());
 }
 
@@ -182,10 +239,20 @@ export function containerElementRetypeClass(srcType, newType) {
 // differently.
 export class Unrepresentable extends Error {}
 
-export const constDefs = (defs) => (typeof defs.const === 'function' ? defs.const() : defs);
+/**
+ * The const view of a `Definitions` (a `DefinitionsConst` is returned as is).
+ * @param {D.Definitions | D.DefinitionsConst} defs
+ * @returns {D.DefinitionsConst}
+ */
+export const constDefs = (defs) => (typeof /** @type {D.Definitions} */ (defs).const === 'function'
+    ? /** @type {D.Definitions} */ (defs).const() : /** @type {D.DefinitionsConst} */ (defs));
 
 // A short, serialisable rendering of a value for a diagnostic sample. Accepts a Value, a native
 // scalar, or null (for an elided/absent image).
+/**
+ * @param {Sampleable} x
+ * @returns {string | null}
+ */
 function sample(x) {
     if (x === null || x === undefined) return null;
     if (typeof x === 'string') return x;                          // an already-rendered marker
@@ -194,24 +261,38 @@ function sample(x) {
 }
 
 // The native scalar of a leaf Value, or `x` itself if already native.
+/** @param {FillScalar} x */
 const nativeOf = (x) =>
     (x !== null && typeof x === 'object' && typeof x.representation === 'function') ? V.Value.dumps(x) : x;
 
 
 export class DefinitionsRewriter {
+    /** @type {Record<string, D.ValueCommitId> | null} */
     _commitIdRemap = null;       // { src commit repr -> new ValueCommitId }, set during a DAG replay
+    /** @type {((finding: Finding) => void) | null} */
     _sink = null;                // diagnostic sink: called with a finding each time a Class-B policy
                                  // actually bites; null = no observation
+    /** @type {D.AttachmentGetting | null} */
     _sourceView = null;          // read-only source `AttachmentGetting` for non-local hooks (wired
                                  // by the store loop); null = no cross-document reads
+    /** @type {D.ValueKey | null} */
     _selfKey = null;             // source key of the document being rewritten (record identity);
                                  // wired by the store loop per-document; null = no self identity
 
+    /**
+     * Wire a rewriter between two existing schemas that differ by renames only (family 1).
+     * @param {D.Definitions | D.DefinitionsConst} sourceDefs
+     * @param {D.Definitions | D.DefinitionsConst} targetDefs
+     * @param {TransformationDirectives} directives
+     */
     constructor(sourceDefs, targetDefs, directives) {
         this.source = constDefs(sourceDefs);
         this.target = constDefs(targetDefs);
         this.d = directives;
+        /** @type {Record<string, D.Attachment>} src attachment rid repr -> target Attachment */
         this.attMap = {};
+        /** @type {Record<string, D.Type>} src rid repr -> target named Type (filled by _buildMaps) */
+        this.typeMap = {};
         this._buildMaps();
         this._shapeGuard();
         this._policyCompleteness();
@@ -219,8 +300,14 @@ export class DefinitionsRewriter {
 
     // -- build the target Definitions from source + directives, then wire the rewriter against
     //    it. Returns [rewriter, target].
+    /**
+     * @param {D.Definitions | D.DefinitionsConst} sourceDefs
+     * @param {TransformationDirectives} directives
+     * @returns {[DefinitionsRewriter, D.Definitions]} the rewriter and the built target
+     */
     static fromDirectives(sourceDefs, directives) {
         const [target, tmap, attMap] = buildTargetDefinitions(sourceDefs, directives);
+        /** @type {DefinitionsRewriter} */
         const self = Object.create(DefinitionsRewriter.prototype);
         // Object.create bypasses the constructor, so the class-field defaults do not run — set
         // the runtime channels explicitly (Python inherits them as class attributes).
@@ -238,6 +325,13 @@ export class DefinitionsRewriter {
 
     // -- notify the diagnostic sink that a Class-B policy governed an OFFENDER. Exact conversions
     //    never emit — they are lossless by contract. Cheap no-op when unobserved.
+    /**
+     * @param {string} op
+     * @param {string | null} site
+     * @param {FindingPolicy} policy
+     * @param {Sampleable} before
+     * @param {Sampleable} after
+     */
     _emit(op, site, policy, before, after) {
         if (this._sink === null) return;
         this._sink({ site, op, policy, before: sample(before), after: sample(after) });
@@ -245,6 +339,11 @@ export class DefinitionsRewriter {
 
     // -- extend a diagnostic site path only while observing (keeps the migrate hot path free of
     //    string building).
+    /**
+     * @param {string | null} site
+     * @param {string} suffix
+     * @returns {string | null}
+     */
     _sub(site, suffix) {
         return (this._sink !== null && site !== null && site !== undefined) ? `${site}${suffix}` : site;
     }
@@ -252,6 +351,7 @@ export class DefinitionsRewriter {
     // -- id map M (name-matching + rename directives), keyed by source rid repr
     _buildMaps() {
         this.typeMap = {};
+        /** @type {[NamedType[], NamedType[]][]} */
         const groups = [
             [this.source.concepts(), this.target.concepts()],
             [this.source.clubs(), this.target.clubs()],
@@ -269,10 +369,19 @@ export class DefinitionsRewriter {
         }
     }
 
+    /**
+     * @param {D.Type} t
+     * @returns {D.Type}
+     */
     _mapNamed(t) { return this.typeMap[t.runtimeId().representation()]; }
 
     // -- arms of the SOURCE variant (mapped to the target domain) absent from the TARGET variant
     //    — i.e. removed. Membership by runtimeId. Returns the removed arms' reprs.
+    /**
+     * @param {D.Type} srcType
+     * @param {D.Type} newType
+     * @returns {string[]}
+     */
     _variantRemovedArms(srcType, newType) {
         const tgtIds = new Set(V.TypeVariant.cast(newType).types().map((a) => a.runtimeId().representation()));
         return V.TypeVariant.cast(srcType).types()
@@ -283,7 +392,7 @@ export class DefinitionsRewriter {
     // -- (P2) shape invariance: every matched pair identical up to renames
     _shapeGuard() {
         for (const s of this.source.structures()) {
-            const tgt = this._mapNamed(s);
+            const tgt = /** @type {D.TypeStructure} */ (this._mapNamed(s));
             const fren = this.d.fieldRenames[s.representation()] ?? {};
             const srcFields = s.fields();
             const tgtNames = tgt.fields().map((f) => f.name());
@@ -296,7 +405,7 @@ export class DefinitionsRewriter {
             });
         }
         for (const s of this.source.enumerations()) {
-            const tgt = this._mapNamed(s);
+            const tgt = /** @type {D.TypeEnumeration} */ (this._mapNamed(s));
             const cren = this.d.caseRenames[s.representation()] ?? {};
             const srcCases = s.cases().map((c) => c.name());
             const tgtCases = tgt.cases().map((c) => c.name());
@@ -359,6 +468,11 @@ export class DefinitionsRewriter {
     }
 
     // -- type => type
+    /**
+     * Map a source-domain type to the target domain.
+     * @param {D.Type} t
+     * @returns {D.Type}
+     */
     mapType(t) {
         const th = this.d.transformedTypes[t.runtimeId().representation()];
         if (th !== undefined) return this.mapType(th[0]);          // global hook: this type maps to newType
@@ -378,6 +492,13 @@ export class DefinitionsRewriter {
     // -- convert one container element to the target element type `te`. A differing-kind leaf,
     //    or a nested container whose type changed, goes through the policy-governed `_retype`;
     //    a same-kind composite or an identical type recurses via `value`.
+    /**
+     * @param {D.Value} elem
+     * @param {D.Type} te
+     * @param {RetypePolicy} policy
+     * @param {string | null} esite
+     * @returns {D.Value}
+     */
     _retypeElement(elem, te, policy, esite) {
         if (elem.typeCode() !== te.typeCode()) return this._retype(elem, te, policy, esite);
         if (['set', 'vector', 'xarray', 'map', 'vec', 'mat', 'optional', 'tuple'].includes(te.typeCode())
@@ -388,6 +509,11 @@ export class DefinitionsRewriter {
 
     // -- add a converted element to a target set, guarding a non-injective collapse (two source
     //    elements mapping to one member) under collisionPolicy — shared by `value` and `_retype`.
+    /**
+     * @param {D.ValueSet} out
+     * @param {D.Value} ne
+     * @param {string | null} site
+     */
     _setAdd(out, ne, site) {
         if (out.contains(ne)) {                                    // Class B: element collapse
             if (this.d.collisionPolicy === 'fail')
@@ -400,6 +526,12 @@ export class DefinitionsRewriter {
 
     // -- set a converted (key, value) into a target map, guarding a key collision under
     //    collisionPolicy. Shared by `value` and `_retype`.
+    /**
+     * @param {D.ValueMap} out
+     * @param {D.Value} nk
+     * @param {D.Value} nv
+     * @param {string | null} site
+     */
     _mapSet(out, nk, nv, site) {
         if (out.contains(nk)) {                                    // Class B: key collision
             const pol = this.d.collisionPolicy;
@@ -420,37 +552,44 @@ export class DefinitionsRewriter {
     //    are guarded here, uniformly for both callers. Returns null if `tt` is not one of the six
     //    (the caller handles struct / key / any / enum / variant / commit_id / leaf). Vec/Mat are
     //    NOT here (numeric, cell-addressed, retype-only) nor is variant (arm-set semantics).
+    /**
+     * @param {D.Value} v
+     * @param {D.Type} tt
+     * @param {ElementFn} elemFn
+     * @param {string | null} site
+     * @returns {D.Value | null}
+     */
     _mapElements(v, tt, elemFn, site) {
         const tc = tt.typeCode();
         if (tc === 'optional') {
             const vo = V.ValueOptional.cast(v);
-            if (vo.isNil()) return new V.ValueOptional(tt);
+            if (vo.isNil()) return new V.ValueOptional(/** @type {D.TypeOptional} */ (tt));
             const et = V.TypeOptional.cast(tt).elementType();
-            return new V.ValueOptional(tt, elemFn(vo.unwrap(false), et, site));
+            return new V.ValueOptional(/** @type {D.TypeOptional} */ (tt), elemFn(/** @type {D.Value} */ (vo.unwrap(false)), et, site));
         }
         if (tc === 'vector') {
             const vv = V.ValueVector.cast(v);
             const et = V.TypeVector.cast(tt).elementType();
-            const out = new V.ValueVector(tt);
+            const out = new V.ValueVector(/** @type {D.TypeVector} */ (tt));
             const esite = this._sub(site, '[]');
-            for (let i = 0; i < vv.size(); i++) out.append(elemFn(vv.at(i, false), et, esite));
+            for (let i = 0; i < vv.size(); i++) out.append(elemFn(/** @type {D.Value} */ (vv.at(i, false)), et, esite));
             return out;
         }
         if (tc === 'set') {
             const vs = V.ValueSet.cast(v);
             const et = V.TypeSet.cast(tt).elementType();
-            const out = new V.ValueSet(tt);
+            const out = new V.ValueSet(/** @type {D.TypeSet} */ (tt));
             const esite = this._sub(site, '{}');
-            for (let i = 0; i < vs.size(); i++) this._setAdd(out, elemFn(vs.at(i, false), et, esite), site);
+            for (let i = 0; i < vs.size(); i++) this._setAdd(out, elemFn(/** @type {D.Value} */ (vs.at(i, false)), et, esite), site);
             return out;
         }
         if (tc === 'map') {
             const mt = V.TypeMap.cast(tt); const kt = mt.keyType(); const et = mt.elementType();
             const vm = V.ValueMap.cast(v);
-            const out = new V.ValueMap(tt);
+            const out = new V.ValueMap(/** @type {D.TypeMap} */ (tt));
             const ksite = this._sub(site, '<key>'); const vsite = this._sub(site, '<val>');
             for (const [k, val] of vm.items(false))
-                this._mapSet(out, elemFn(k, kt, ksite), elemFn(val, et, vsite), site);
+                this._mapSet(out, elemFn(/** @type {D.Value} */ (k), kt, ksite), elemFn(/** @type {D.Value} */ (val), et, vsite), site);
             return out;
         }
         if (tc === 'xarray') {
@@ -459,8 +598,9 @@ export class DefinitionsRewriter {
             const vx = V.ValueXArray.cast(v);
             const et = V.TypeXArray.cast(tt).elementType();
             const esite = this._sub(site, '[]');
-            const out = new V.ValueXArray(tt);
-            out.rebuildFrom(vx, vx.items(false).map(([pos, val]) => [pos, elemFn(val, et, esite)]));
+            const out = new V.ValueXArray(/** @type {D.TypeXArray} */ (tt));
+            out.rebuildFrom(vx, vx.items(false).map(
+                /** @returns {[D.ValueUUId, D.Value]} */ ([pos, val]) => [pos, elemFn(/** @type {D.Value} */ (val), et, esite)]));
             return out;
         }
         if (tc === 'tuple') {
@@ -469,8 +609,8 @@ export class DefinitionsRewriter {
             if (vt.size() !== ets.length)                             // a tuple conversion is per-position;
                 throw new Error(`[unsupported] tuple arity change ${vt.size()}->${ets.length} — a tuple conversion must preserve arity (it is a per-position element conversion)`);
             const parts = [];
-            for (let i = 0; i < vt.size(); i++) parts.push(elemFn(vt.at(i, false), ets[i], this._sub(site, `.${i}`)));
-            return new V.ValueTuple(tt, parts);
+            for (let i = 0; i < vt.size(); i++) parts.push(elemFn(/** @type {D.Value} */ (vt.at(i, false)), ets[i], this._sub(site, `.${i}`)));
+            return new V.ValueTuple(/** @type {D.TypeTuple} */ (tt), parts);
         }
         return null;
     }
@@ -478,6 +618,13 @@ export class DefinitionsRewriter {
     // -- retype dispatcher: structural (unwrap, Vector<->Set, the Vector bridge, variant arm-set,
     //    Vec/Mat element, container element) + leaf (widen/narrow/format/parse). Class A converts
     //    automatically; Class B consults the policy ONLY on the offending value.
+    /**
+     * @param {D.Value} sv
+     * @param {D.Type} tt
+     * @param {RetypePolicy} policy
+     * @param {string | null} [site]
+     * @returns {D.Value}
+     */
     _retype(sv, tt, policy, site = null) {
         const sc = sv.typeCode(); const tc = tt.typeCode();
 
@@ -488,31 +635,31 @@ export class DefinitionsRewriter {
             // The unwrapped value may itself need a POLICY-GOVERNED leaf conversion; route a
             // differing leaf back through _retype so the policy governs it too. Same typeCode =>
             // plain rewrite / composite recursion via value().
-            const inner = vo.unwrap(false);
+            const inner = /** @type {D.Value} */ (vo.unwrap(false));
             if (inner.typeCode() === tc) return this.value(inner, tt, site);
             return this._retype(inner, tt, policy, site);
         }
         if (sc === 'vector' && tc === 'set') {                        // Vector -> Set (collapse: the
             const et = V.TypeSet.cast(tt).elementType();              // set dedups silently — that is
-            const out = new V.ValueSet(tt); const vv = V.ValueVector.cast(sv);   // the point of the shape
+            const out = new V.ValueSet(/** @type {D.TypeSet} */ (tt)); const vv = V.ValueVector.cast(sv);   // the point of the shape
             const esite = this._sub(site, '[]');                     // change; the policy only gated
-            for (let i = 0; i < vv.size(); i++) out.add(this.value(vv.at(i, false), et, esite));   // completeness)
+            for (let i = 0; i < vv.size(); i++) out.add(this.value(/** @type {D.Value} */ (vv.at(i, false)), et, esite));   // completeness)
             return out;
         }
         if (sc === 'set' && tc === 'vector') {                        // Set -> Vector (Class A)
             const et = V.TypeVector.cast(tt).elementType();
-            const out = new V.ValueVector(tt); const vs = V.ValueSet.cast(sv);
+            const out = new V.ValueVector(/** @type {D.TypeVector} */ (tt)); const vs = V.ValueSet.cast(sv);
             const esite = this._sub(site, '{}');
-            for (let i = 0; i < vs.size(); i++) out.append(this.value(vs.at(i, false), et, esite));
+            for (let i = 0; i < vs.size(); i++) out.append(this.value(/** @type {D.Value} */ (vs.at(i, false)), et, esite));
             return out;
         }
         if (sc === 'vector' && tc === 'xarray') {                     // Vector -> XArray (Class A)
             const et = V.TypeXArray.cast(tt).elementType();
-            const out = new V.ValueXArray(tt); const vv = V.ValueVector.cast(sv);
+            const out = new V.ValueXArray(/** @type {D.TypeXArray} */ (tt)); const vv = V.ValueVector.cast(sv);
             const esite = this._sub(site, '[]');
             for (let i = 0; i < vv.size(); i++) {                      // DETERMINISTIC index-derived
                 const pos = new V.ValueUUId(`00000001-0000-0000-0000-${i.toString(16).padStart(12, '0')}`);
-                out.insert(V.ValueXArray.END, this.value(vv.at(i, false), et, esite), pos);   // positions
+                out.insert(V.ValueXArray.END, this.value(/** @type {D.Value} */ (vv.at(i, false)), et, esite), pos);   // positions
             }
             return out;
         }
@@ -520,7 +667,7 @@ export class DefinitionsRewriter {
             return this.value(V.ValueXArray.cast(sv).toVector(), tt, site);
 
         if (['vec', 'mat'].includes(sc) && tc === 'vector') {         // Vec/Mat -> Vector (Class A): flatten
-            const out = new V.ValueVector(tt);
+            const out = new V.ValueVector(/** @type {D.TypeVector} */ (tt));
             if (sc === 'vec') {
                 const vv = V.ValueVec.cast(sv);
                 for (let i = 0; i < vv.size(); i++) out.append(vv.at(i, false));
@@ -535,26 +682,26 @@ export class DefinitionsRewriter {
             const n = V.TypeVec.cast(tt).size(); const vv = V.ValueVector.cast(sv);
             const elems = [];
             for (let i = 0; i < vv.size(); i++) elems.push(vv.at(i, true));   // natives for the ValueVec ctor
-            if (elems.length === n) return new V.ValueVec(tt, elems);         // exact length -> lossless
+            if (elems.length === n) return new V.ValueVec(/** @type {D.TypeVec} */ (tt), elems);         // exact length -> lossless
             const op = `Vector→Vec length ${elems.length}→${n}`;
             if (policy === null || policy === 'fail')
                 throw new Error(`[Class-B] Vector→Vec length ${elems.length} != fixed size ${n}; decree a policy`);
             if (policy === 'drop-record') { this._emit(op, site, policy, elems.length, null); throw new Unrepresentable('length-fit'); }
             if (Array.isArray(policy) && policy[0] === 'fit') {       // truncate the tail / pad the fill
                 const fitted = elems.slice(0, n);
-                while (fitted.length < n) fitted.push(nativeOf(policy[1]));
+                while (fitted.length < n) fitted.push(/** @type {D.NumericOutputValue} */ (nativeOf(policy[1])));
                 this._emit(op, site, policy, elems.length, n);
-                return new V.ValueVec(tt, fitted);
+                return new V.ValueVec(/** @type {D.TypeVec} */ (tt), fitted);
             }
             throw new Error(`unknown policy ${JSON.stringify(policy)} for Vector→Vec`);
         }
 
         if (sc === 'variant' && tc === 'variant') {                   // variant arm-set change
             const vv = V.ValueVariant.cast(sv);
-            const inner = this.value(vv.unwrap(false), undefined, site);   // map the concrete arm value
+            const inner = this.value(/** @type {D.Value} */ (vv.unwrap(false)), undefined, site);   // map the concrete arm value
             const tgtIds = new Set(V.TypeVariant.cast(tt).types().map((a) => a.runtimeId().representation()));
             if (tgtIds.has(inner.type().runtimeId().representation())) {    // arm survives (add / reorder)
-                const out = new V.ValueVariant(tt);                        // re-wrap BY TYPE — index-safe
+                const out = new V.ValueVariant(/** @type {D.TypeVariant} */ (tt));   // re-wrap BY TYPE — index-safe
                 out.wrap(inner, inner.type());
                 return out;
             }
@@ -568,21 +715,21 @@ export class DefinitionsRewriter {
 
         if (sc === 'vec' && tc === 'vec') {                           // Vec<T,n> -> Vec<T',n>: element
             const te = V.TypeVec.cast(tt).elementType();              // widen (A) / narrow (B), fixed size.
-            const vv = V.ValueVec.cast(sv); const out = new V.ValueVec(tt);
+            const vv = V.ValueVec.cast(sv); const out = new V.ValueVec(/** @type {D.TypeVec} */ (tt));
             const n = V.TypeVec.cast(tt).size();
             for (let i = 0; i < n; i++) {
-                const conv = this._retype(vv.at(i, false), te, policy, this._sub(site, `[${i}]`));
-                out.set(i, V.Value.dumps(conv));
+                const conv = this._retype(/** @type {D.Value} */ (vv.at(i, false)), te, policy, this._sub(site, `[${i}]`));
+                out.set(i, /** @type {D.NumericOutputValue} */ (V.Value.dumps(conv)));
             }
             return out;
         }
         if (sc === 'mat' && tc === 'mat') {                           // Mat<T,c,r> -> Mat<T',c,r>: element
             const tm = V.TypeMat.cast(tt); const te = tm.elementType();
-            const vm = V.ValueMat.cast(sv); const out = new V.ValueMat(tt);
+            const vm = V.ValueMat.cast(sv); const out = new V.ValueMat(/** @type {D.TypeMat} */ (tt));
             for (let c = 0; c < tm.columns(); c++)
                 for (let r = 0; r < tm.rows(); r++) {
-                    const conv = this._retype(vm.at(c, r, false), te, policy, this._sub(site, `[${c},${r}]`));
-                    out.set(c, r, V.Value.dumps(conv));
+                    const conv = this._retype(/** @type {D.Value} */ (vm.at(c, r, false)), te, policy, this._sub(site, `[${c},${r}]`));
+                    out.set(c, r, /** @type {D.NumericOutputValue} */ (V.Value.dumps(conv)));
                 }
             return out;
         }
@@ -606,10 +753,10 @@ export class DefinitionsRewriter {
         if (COMPOSITES.has(sc) || COMPOSITES.has(tc))
             throw new Error(`[unsupported] retype ${sc}->${tc}: no conversion branch for this composite retype — use a transformField / transformType hook, or an explicit directive; the engine will not guess a composite mapping`);
         if (WIDENING.has(`${sc}>${tc}`))
-            return V.Value.create(tt, numericNative(tc, V.Value.dumps(sv)));   // A: widen (lossless)
+            return V.Value.create(tt, numericNative(tc, /** @type {D.NumericOutputValue} */ (V.Value.dumps(sv))));   // A: widen (lossless)
         if (tc === 'string') return new V.ValueString(String(V.Value.dumps(sv)));    // A: format (total)
         if (sc === 'string') return this._parse(sv, tt, policy, site);               // B: parse
-        const native = V.Value.dumps(sv);                                            // numeric narrowing
+        const native = /** @type {number | bigint | boolean} */ (V.Value.dumps(sv));   // numeric narrowing
         const [lo, hi] = INT_RANGE[tc] ?? [null, null];
         if (FLOATS.has(sc) && (tc in INT_RANGE)) return this._floatToInt(Number(native), tt, lo, hi, policy, site);
         if (lo !== null) {
@@ -633,6 +780,15 @@ export class DefinitionsRewriter {
 
     // float -> int (Class B). Truncate toward zero, then the decreed policy governs the offenders:
     // a finite value out of range, or a non-finite one (NaN / +-inf) which has no int image at all.
+    /**
+     * @param {number} native
+     * @param {D.Type} tt
+     * @param {bigint} lo
+     * @param {bigint} hi
+     * @param {RetypePolicy} policy
+     * @param {string | null} [site]
+     * @returns {D.Value}
+     */
     _floatToInt(native, tt, lo, hi, policy, site = null) {
         const tcn = tt.typeCode();
         if (Number.isFinite(native)) {
@@ -659,6 +815,14 @@ export class DefinitionsRewriter {
         throw new Error(`unknown policy ${JSON.stringify(policy)} for float→int`);
     }
 
+    /**
+     * @param {D.Type} tt
+     * @param {RetypePolicy} policy
+     * @param {string} kind
+     * @param {string | null} [site]
+     * @param {Sampleable} [before]
+     * @returns {D.Value}
+     */
     _onMissing(tt, policy, kind, site = null, before = null) {      // nil-unwrap / parse-fail
         if (policy === null || policy === 'fail') throw new Error(`[Class-B] ${kind}: absent value; decree a policy`);
         if (policy === 'drop-record') { this._emit(kind, site, policy, before, null); throw new Unrepresentable(kind); }
@@ -666,8 +830,15 @@ export class DefinitionsRewriter {
         throw new Error(`unknown policy ${JSON.stringify(policy)}`);
     }
 
+    /**
+     * @param {D.Value} sv
+     * @param {D.Type} tt
+     * @param {RetypePolicy} policy
+     * @param {string | null} [site]
+     * @returns {D.Value}
+     */
     _parse(sv, tt, policy, site = null) {
-        const s = V.Value.dumps(sv); const tc = tt.typeCode();
+        const s = /** @type {string} */ (V.Value.dumps(sv)); const tc = tt.typeCode();
         try {
             if (tc in INT_RANGE) {
                 const n = BigInt(s);                                 // throws on non-integer text
@@ -686,6 +857,12 @@ export class DefinitionsRewriter {
     // -- Vec/Mat DIMENSION transforms (family 2). Position-preserving: cell [i]/[i,j] keeps its
     //    coordinates. Grow fills the new cells; shrink drops the trailing ones. No flatten — no
     //    layout ambiguity; column-major is preserved throughout.
+    /**
+     * @param {ShrinkPolicy} onShrink
+     * @param {string | null} site
+     * @param {number | string} before
+     * @param {number | string} after
+     */
     _shrinkLoss(onShrink, site, before, after) {
         if (onShrink === 'fail')
             throw new Error(`[Class-B] resize would drop cells (${before} → ${after}); pass onShrink='accept' to keep the fit and discard the trailing cells`);
@@ -693,63 +870,94 @@ export class DefinitionsRewriter {
         throw new Error(`unknown onShrink ${JSON.stringify(onShrink)}`);
     }
 
+    /**
+     * @param {D.Value} sv
+     * @param {D.Type} tt
+     * @param {ResizeSpec} spec
+     * @param {string | null} [site]
+     * @returns {D.Value}
+     */
     _resize(sv, tt, spec, site = null) {
         const [kind, , fill, onShrink] = spec;
         if (kind === 'vec') {
             const svv = V.ValueVec.cast(sv);
             const sn = svv.size(); const n = V.TypeVec.cast(tt).size();
             if (sn > n) this._shrinkLoss(onShrink, site, sn, n);      // shrink: the tail is dropped (raises on 'fail')
-            const out = new V.ValueVec(tt);                          // inits to the type's zero
-            for (let i = 0; i < Math.min(sn, n); i++) out.set(i, svv.at(i, true));   // preserve the overlap
-            if (n > sn && fill !== 'zero') for (let i = sn; i < n; i++) out.set(i, nativeOf(fill));
+            const out = new V.ValueVec(/** @type {D.TypeVec} */ (tt));   // inits to the type's zero
+            for (let i = 0; i < Math.min(sn, n); i++) out.set(i, /** @type {D.NumericOutputValue} */ (svv.at(i, true)));   // preserve the overlap
+            if (n > sn && fill !== 'zero') for (let i = sn; i < n; i++) out.set(i, /** @type {D.NumericOutputValue} */ (nativeOf(fill)));
             return out;
         }
         const svm = V.ValueMat.cast(sv); const smt = V.TypeMat.cast(sv.type());   // kind == 'mat'
         const sc = smt.columns(); const sr = smt.rows();
         const tmt = V.TypeMat.cast(tt); const tc = tmt.columns(); const tr = tmt.rows();
         if (sc > tc || sr > tr) this._shrinkLoss(onShrink, site, `${sc}×${sr}`, `${tc}×${tr}`);
-        const out = new V.ValueMat(tt);                              // inits to IDENTITY
+        const out = new V.ValueMat(/** @type {D.TypeMat} */ (tt));   // inits to IDENTITY
         for (let c = 0; c < Math.min(sc, tc); c++)                   // preserve the source block; new
-            for (let r = 0; r < Math.min(sr, tr); r++) out.set(c, r, svm.at(c, r, true));   // cells keep identity
+            for (let r = 0; r < Math.min(sr, tr); r++) out.set(c, r, /** @type {D.NumericOutputValue} */ (svm.at(c, r, true)));   // cells keep identity
         if (fill !== 'identity') {                                   // 'zero' / scalar: overwrite the
-            const fv = fill === 'zero' ? 0 : nativeOf(fill);         // cells outside the source block
+            const fv = fill === 'zero' ? 0 : /** @type {D.NumericOutputValue} */ (nativeOf(fill));   // cells outside the source block
             for (let c = 0; c < tc; c++)
                 for (let r = 0; r < tr; r++) if (c >= sc || r >= sr) out.set(c, r, fv);
         }
         return out;
     }
 
+    /**
+     * @param {D.Value} sv
+     * @param {D.Type} tt
+     * @returns {D.Value}
+     */
     _transpose(sv, tt) {
         const svm = V.ValueMat.cast(sv); const smt = V.TypeMat.cast(sv.type());
-        const out = new V.ValueMat(tt);                              // tt is Mat<r,c> (derived)
+        const out = new V.ValueMat(/** @type {D.TypeMat} */ (tt));   // tt is Mat<r,c> (derived)
         for (let c = 0; c < smt.columns(); c++)
-            for (let r = 0; r < smt.rows(); r++) out.set(r, c, svm.at(c, r, true));   // [c,r] -> [r,c]
+            for (let r = 0; r < smt.rows(); r++) out.set(r, c, /** @type {D.NumericOutputValue} */ (svm.at(c, r, true)));   // [c,r] -> [r,c]
         return out;
     }
 
     // -- Class-C hooks. The VALIDATION is where total-or-explicit-refusal survives user code: the
     //    hook returns a valid target value (used), throws Unrepresentable (drop), or throws
     //    (refuse) — anything not a value of `targetType` is refused.
+    /**
+     * @param {unknown} result
+     * @param {D.Type} targetType
+     */
     _validateHookOutput(result, targetType) {
-        if (!(result !== null && typeof result === 'object' && typeof result.type === 'function'))
+        if (!(result !== null && typeof result === 'object' && typeof /** @type {{ type?: unknown }} */ (result).type === 'function'))
             throw new Error(`[hook] transform must return a Value, got ${result === null ? 'null' : typeof result}`);
-        if (result.type().runtimeId().representation() !== targetType.runtimeId().representation())
-            throw new Error(`[hook] transform returned ${result.type().representation()}, expected ${targetType.representation()}`);
+        if (/** @type {D.Value} */ (result).type().runtimeId().representation() !== targetType.runtimeId().representation())
+            throw new Error(`[hook] transform returned ${/** @type {D.Value} */ (result).type().representation()}, expected ${targetType.representation()}`);
     }
 
+    /**
+     * @param {ValueHook} fn
+     * @param {D.Value} value
+     * @param {D.Type} targetType
+     * @param {string | null} site
+     * @returns {D.Value}
+     */
     _applyValueHook(fn, value, targetType, site) {                   // transform_type (value-scoped)
         const result = hookParamCount(fn) >= 3
             ? fn(value, targetType, new HookContext(this))           // opts into the non-local ctx
-            : fn(value, targetType);                                 // user code; may throw Unrepresentable
+            : /** @type {(v: D.Value, t: D.Type) => D.Value} */ (fn)(value, targetType);   // user code; may throw Unrepresentable
         this._validateHookOutput(result, targetType);
         this._emit('transform', site, fn.name || 'hook', value, result);
         return result;
     }
 
+    /**
+     * @param {FieldHook} fn
+     * @param {D.ValueStructure} sourceStruct
+     * @param {string} fieldName
+     * @param {D.Type} targetType
+     * @param {string | null} site
+     * @returns {D.Value}
+     */
     _applyFieldHook(fn, sourceStruct, fieldName, targetType, site) {   // struct-scoped
         const result = hookParamCount(fn) >= 4
             ? fn(sourceStruct, fieldName, targetType, new HookContext(this))   // opts into the non-local ctx
-            : fn(sourceStruct, fieldName, targetType);               // sees the struct (siblings) + field name
+            : /** @type {(s: D.ValueStructure, n: string, t: D.Type) => D.Value} */ (fn)(sourceStruct, fieldName, targetType);   // sees the struct (siblings) + field name
         this._validateHookOutput(result, targetType);
         let before;
         try { before = sourceStruct.at(fieldName, false); }         // the old field value, if any
@@ -759,10 +967,16 @@ export class DefinitionsRewriter {
     }
 
     // -- target field name -> source field name (via renames), or null if added
+    /**
+     * @param {D.TypeStructure} src
+     * @param {D.TypeStructure} tgt
+     * @returns {Record<string, string | null>}
+     */
     _fieldSource(src, tgt) {
         const fren = this.d.fieldRenames[src.representation()] ?? {};
         const tgtToSrc = Object.fromEntries(Object.entries(fren).map(([s, t]) => [t, s]));
         const srcNames = new Set(src.fields().map((f) => f.name()));
+        /** @type {Record<string, string | null>} */
         const out = {};
         for (const f of tgt.fields()) {
             const n = f.name();
@@ -772,6 +986,13 @@ export class DefinitionsRewriter {
     }
 
     // -- value => value, TARGET-DIRECTED. `tt` = the target type (derived if undefined).
+    /**
+     * Rewrite a source-domain value to the target domain, target-directed.
+     * @param {D.Value} v the source value
+     * @param {D.Type} [tt] the target type (derived from `v` when omitted)
+     * @param {string | null} [site] the diagnostic site path (observation only)
+     * @returns {D.Value}
+     */
     value(v, tt = undefined, site = null) {
         if (tt === undefined) tt = this.mapType(v.type());
         // global Class-C hook: any node whose SOURCE type is transformType'd (a field-level
@@ -791,8 +1012,10 @@ export class DefinitionsRewriter {
             const resized = this.d.resizedFields[srep] ?? {};
             const transposed = this.d.transposedFields[srep] ?? new Set();
             const transformed = this.d.transformedFields[srep] ?? {};
+            /** @type {Record<string, [D.Value | D.Type, FieldHook | null]>} */
             const adds = {};                                         // target name -> [default | Type, derive?]
             for (const [name, payload, derive] of (this.d.addedFields[srep] ?? [])) adds[name] = [payload, derive];
+            /** @type {{ [fieldName: string]: D.InputValue | undefined }} */
             const out = {};
             for (const f of tgt.fields()) {
                 const sn = fsrc[f.name()];
@@ -801,20 +1024,20 @@ export class DefinitionsRewriter {
                     if (derive !== null && derive !== undefined) {    // Class-C: derived from the struct
                         out[f.name()] = this._applyFieldHook(derive, vs, f.name(), f.type(), obs ? `${srep}.${f.name()}` : null);
                     } else {                                          // static seed value (NOT defaultValue():
-                        out[f.name()] = (payload !== null && payload !== undefined) ? payload : f.defaultValue();
+                        out[f.name()] = (payload !== null && payload !== undefined) ? /** @type {D.Value} */ (payload) : f.defaultValue();
                     }
                 } else if (sn in transformed) {                       // Class-C field hook (sees the struct)
                     const fn = transformed[sn][1];
                     out[f.name()] = this._applyFieldHook(fn, vs, sn, f.type(), obs ? `${srep}.${sn}` : null);
                 } else if (sn in resized) {                           // family 2: Vec/Mat resize
-                    out[f.name()] = this._resize(vs.at(sn, false), f.type(), resized[sn], obs ? `${srep}.${sn}` : null);
+                    out[f.name()] = this._resize(/** @type {D.Value} */ (vs.at(sn, false)), f.type(), resized[sn], obs ? `${srep}.${sn}` : null);
                 } else if (transposed.has(sn)) {                      // family 2: Mat transpose
-                    out[f.name()] = this._transpose(vs.at(sn, false), f.type());
+                    out[f.name()] = this._transpose(/** @type {D.Value} */ (vs.at(sn, false)), f.type());
                 } else if (sn in retypes) {                           // family 2: retype
                     const [newType, policy] = retypes[sn];
-                    out[f.name()] = this._retype(vs.at(sn, false), newType, policy, obs ? `${srep}.${sn}` : null);
+                    out[f.name()] = this._retype(/** @type {D.Value} */ (vs.at(sn, false)), newType, policy, obs ? `${srep}.${sn}` : null);
                 } else {                                              // kept/renamed -> recurse
-                    out[f.name()] = this.value(vs.at(sn, false), f.type(), obs ? `${srep}.${f.name()}` : null);
+                    out[f.name()] = this.value(/** @type {D.Value} */ (vs.at(sn, false)), f.type(), obs ? `${srep}.${f.name()}` : null);
                 }
             }
             return new V.ValueStructure(tgt, out);
@@ -824,13 +1047,13 @@ export class DefinitionsRewriter {
             // Rebuild on the target concept + stable instanceId, then retype to the mapped Key<X>
             // so the flavour (concept / club / any-concept) survives.
             const vk = V.ValueKey.cast(v);
-            const base = V.ValueKey.create(this._mapNamed(vk.typeConcept()), vk.instanceId());
+            const base = V.ValueKey.create(/** @type {D.TypeConcept} */ (this._mapNamed(vk.typeConcept())), vk.instanceId());
             return base.toKey(V.TypeKey.cast(tt));
         }
 
         if (tc === 'any') {
             const va = V.ValueAny.cast(v);
-            return va.isNil() ? new V.ValueAny() : new V.ValueAny(this.value(va.unwrap(false), undefined, site));
+            return va.isNil() ? new V.ValueAny() : new V.ValueAny(this.value(/** @type {D.Value} */ (va.unwrap(false)), undefined, site));
         }
 
         if (tc === 'enum') {
@@ -856,8 +1079,8 @@ export class DefinitionsRewriter {
 
         if (tc === 'variant') {
             const vv = V.ValueVariant.cast(v);
-            const inner = this.value(vv.unwrap(false), undefined, site);
-            const out = new V.ValueVariant(tt);
+            const inner = this.value(/** @type {D.Value} */ (vv.unwrap(false)), undefined, site);
+            const out = new V.ValueVariant(/** @type {D.TypeVariant} */ (tt));
             out.wrap(inner, inner.type());
             return out;
         }
@@ -873,6 +1096,11 @@ export class DefinitionsRewriter {
     }
 
     // -- map a source attachment (a named Map<Key,Doc>) to its target
+    /**
+     * Map a source attachment to its target.
+     * @param {D.Attachment} a
+     * @returns {D.Attachment}
+     */
     attachment(a) { return this.attMap[a.runtimeId().representation()]; }
 }
 
@@ -884,16 +1112,50 @@ export class DefinitionsRewriter {
 //    one namespace may each carry an attachment of the same name (`N::Customer.orders` and
 //    `N::Vendor.orders`), and a directive written that way addresses every homonym at once.
 //    Prefer the identifier; a name-based consumer (a source codemod) can only mirror that one.
+/**
+ * The directive keys of an attachment: its identifier, then its bare (legacy) name.
+ * @param {D.Attachment} a
+ * @returns {[string, string]}
+ */
 export function attKeys(a) {
     const identifier = a.identifier();
     return [identifier, identifier.slice(identifier.lastIndexOf('.') + 1)];
 }
 
+/**
+ * The directive entry for an attachment, by identifier then by bare name.
+ * @template T
+ * @overload
+ * @param {Record<string, T>} mapping
+ * @param {D.Attachment} a
+ * @returns {T | undefined}
+ */
+/**
+ * @template T
+ * @overload
+ * @param {Record<string, T>} mapping
+ * @param {D.Attachment} a
+ * @param {T} fallback returned when neither key is present
+ * @returns {T}
+ */
+/**
+ * @template T
+ * @param {Record<string, T>} mapping
+ * @param {D.Attachment} a
+ * @param {T} [fallback]
+ * @returns {T | undefined}
+ */
 export function attGet(mapping, a, fallback = undefined) {
     for (const key of attKeys(a)) if (Object.hasOwn(mapping, key)) return mapping[key];
     return fallback;
 }
 
+/**
+ * Whether a directive set names an attachment (by identifier or bare name).
+ * @param {Set<string>} container
+ * @param {D.Attachment} a
+ * @returns {boolean}
+ */
 export function attHit(container, a) {
     return attKeys(a).some((key) => container.has(key));
 }
@@ -902,6 +1164,10 @@ export function attHit(container, a) {
 // -- an add_field default lives in a TARGET field but is authored against the SOURCE domain:
 //    expressible only if it references no named (migrated) type — a primitive leaf or a container
 //    of such. A default embedding a struct/enum/key/Any would carry stale source ids.
+/**
+ * @param {D.Type} t
+ * @returns {boolean}
+ */
 function defaultDomainFree(t) {
     const tc = t.typeCode();
     if (PRIMITIVES.has(tc)) return true;                            // scalar leaves (incl. vec/mat)
@@ -919,13 +1185,19 @@ function defaultDomainFree(t) {
 // -- Vec/Mat dimension ops: derive the target type (element T read from the source) and validate
 //    the field is a DIRECT Vec/Mat. A nested Vec/Mat is not yet addressable (needs a type-path
 //    directive).
+/**
+ * @param {string} structRepr
+ * @param {D.TypeStructureField} field
+ * @param {ResizeSpec} spec
+ * @returns {D.Type}
+ */
 function resizedType(structRepr, field, spec) {
     const [kind, dims, fill] = spec;
     const t = field.type();
     if (kind === 'vec') {
         if (t.typeCode() !== 'vec')
             throw new Error(`[unsupported] resizeVecField on ${structRepr}.${field.name()}: its type is ${t.representation()}, not a direct Vec — a nested Vec/Mat is not yet addressable (needs a type-path directive)`);
-        if (fill === 'identity')
+        if (/** @type {unknown} */ (fill) === 'identity')      // a JS caller can still pass it
             throw new Error(`[unsupported] resizeVecField fill='identity' on ${structRepr}.${field.name()}: identity is Mat-only; use 'zero' or a scalar`);
         return new V.TypeVec(V.TypeVec.cast(t).elementType(), dims[0]);
     }
@@ -934,6 +1206,11 @@ function resizedType(structRepr, field, spec) {
     return new V.TypeMat(V.TypeMat.cast(t).elementType(), dims[0], dims[1]);
 }
 
+/**
+ * @param {string} structRepr
+ * @param {D.TypeStructureField} field
+ * @returns {D.Type}
+ */
 function transposedType(structRepr, field) {
     const t = field.type();
     if (t.typeCode() !== 'mat')
@@ -944,6 +1221,10 @@ function transposedType(structRepr, field) {
 
 // Validate every resize/transpose directive up front (direct-Vec/Mat + fill coherence), before
 // any target is built or data touched. Shared by both construction paths.
+/**
+ * @param {D.DefinitionsConst} src
+ * @param {TransformationDirectives} directives
+ */
 function validateDimensionOps(src, directives) {
     const byRepr = Object.fromEntries(src.structures().map((s) => [s.representation(), s]));
     for (const [srep, fields] of Object.entries(directives.resizedFields)) {
@@ -975,6 +1256,10 @@ function validateDimensionOps(src, directives) {
 // contents are validated by the build, which refuses a non-permutation); and transformType keys
 // its source by runtimeId, which need not occur in the persistence schema at all (a composite used
 // only in a function-pool signature is the case the source codemod exists to handle).
+/**
+ * @param {D.DefinitionsConst} src
+ * @param {TransformationDirectives} directives
+ */
 function refuseUnknownTargets(src, directives) {
     const structures = new Map(src.structures().map((s) => [s.representation(), s]));
     const enumerations = new Map(src.enumerations().map((e) => [e.representation(), e]));
@@ -987,18 +1272,35 @@ function refuseUnknownTargets(src, directives) {
     const attachments = new Set();
     for (const a of src.attachments()) for (const key of attKeys(a)) attachments.add(key);
 
+    /** @type {string[]} */
     const findings = [];
+    /**
+     * @param {string} directive
+     * @param {string} repr
+     * @param {Set<string>} pool
+     * @param {string} what
+     */
     const knownType = (directive, repr, pool, what) => {
         if (pool.has(repr)) return true;
         findings.push(`${directive}('${repr}') — no such ${what}`);
         return false;
     };
+    /**
+     * @param {string} directive
+     * @param {string} holderRepr
+     * @param {Map<string, D.TypeStructure> | Map<string, D.TypeEnumeration>} holders
+     * @param {string[]} names
+     * @param {'fields' | 'cases'} what
+     * @param {string[]} [extra]
+     */
     const knownMembers = (directive, holderRepr, holders, names, what, extra = []) => {
         const holderWhat = what === 'fields' ? 'structure' : 'enumeration';
         // the holder was already reported when unknown; do not report its members too
         if (!knownType(directive, holderRepr, new Set(holders.keys()), holderWhat)) return;
         const held = holders.get(holderRepr);
-        const have = new Set([...(what === 'fields' ? held.fields() : held.cases())
+        // `held` is present: knownType just found holderRepr among the holders' keys
+        const have = new Set([...(what === 'fields'
+            ? /** @type {D.TypeStructure} */ (held).fields() : /** @type {D.TypeEnumeration} */ (held).cases())
             .map((m) => m.name()), ...extra]);
         for (const name of names)
             if (!have.has(name))
@@ -1011,12 +1313,13 @@ function refuseUnknownTargets(src, directives) {
     for (const repr of directives.droppedTypes) knownType('dropType', repr, named, 'type');
     for (const repr of Object.keys(directives.typeNamespaces)) knownType('moveType', repr, named, 'type');
 
+    /** @type {[string, Record<string, Record<string, unknown> | Set<string>>, (v: Record<string, unknown> | Set<string>) => string[]][]} */
     const fieldGroups = [
         ['renameField', directives.fieldRenames, (v) => Object.keys(v)],
-        ['dropField', directives.droppedFields, (v) => [...v]],
+        ['dropField', directives.droppedFields, (v) => [.../** @type {Set<string>} */ (v)]],
         ['retypeField', directives.retypedFields, (v) => Object.keys(v)],
         ['resizeField', directives.resizedFields, (v) => Object.keys(v)],
-        ['transposeMatField', directives.transposedFields, (v) => [...v]],
+        ['transposeMatField', directives.transposedFields, (v) => [.../** @type {Set<string>} */ (v)]],
         ['transformField', directives.transformedFields, (v) => Object.keys(v)],
         ['documentField', directives.fieldDocs, (v) => Object.keys(v)],
     ];
@@ -1033,24 +1336,24 @@ function refuseUnknownTargets(src, directives) {
     for (const holder of [...Object.keys(directives.addedFields), ...Object.keys(directives.fieldOrder)])
         knownType('addField / reorderFields', holder, new Set(structures.keys()), 'structure');
 
-    for (const [directive, group] of [['renameCase', directives.caseRenames],
-        ['removeCase', directives.removedCases], ['documentCase', directives.caseDocs]]) {
+    for (const [directive, group] of /** @type {[string, Record<string, Record<string, unknown>>][]} */ ([['renameCase', directives.caseRenames],
+        ['removeCase', directives.removedCases], ['documentCase', directives.caseDocs]])) {
         for (const [holder, entry] of Object.entries(group))
             knownMembers(directive, holder, enumerations, Object.keys(entry), 'cases');
     }
     for (const holder of [...Object.keys(directives.addedCases), ...Object.keys(directives.caseOrder)])
         knownType('addCase / reorderCases', holder, new Set(enumerations.keys()), 'enumeration');
 
-    for (const [directive, group] of [['renameAttachment', directives.attachmentRenames],
+    for (const [directive, group] of /** @type {[string, Record<string, unknown> | Set<string>][]} */ ([['renameAttachment', directives.attachmentRenames],
         ['documentAttachment', directives.attachmentDocs],
         ['dropAttachment', directives.droppedAttachments],
-        ['moveAttachment', directives.attachmentNamespaces]]) {
+        ['moveAttachment', directives.attachmentNamespaces]])) {
         for (const identifier of (group instanceof Set ? group : Object.keys(group)))
             knownType(directive, identifier, attachments, 'attachment');
     }
 
-    for (const [directive, group] of [['renameNamespace', directives.namespaceNames],
-        ['remapNamespace', directives.namespaceUuids]]) {
+    for (const [directive, group] of /** @type {[string, Record<string, unknown>][]} */ ([['renameNamespace', directives.namespaceNames],
+        ['remapNamespace', directives.namespaceUuids]])) {
         for (const uuid of Object.keys(group))
             knownType(directive, uuid, namespaces, 'namespace (by uuid)');
     }
@@ -1064,6 +1367,12 @@ function refuseUnknownTargets(src, directives) {
 }
 
 
+/**
+ * @param {D.DefinitionsConst} src
+ * @param {TransformationDirectives} directives
+ * @param {(t: D.Type) => string | null} refsDropped
+ * @returns {string | null}
+ */
 function formatDropReport(src, directives, refsDropped) {
     const droppedTypes = directives.droppedTypes;
     const droppedAtts = directives.droppedAttachments;
@@ -1093,7 +1402,7 @@ function formatDropReport(src, directives, refsDropped) {
     }
     for (const a of src.attachments()) {
         if (attHit(droppedAtts, a)) continue;
-        for (const [label, tt] of [['key', a.keyType()], ['document', a.documentType()]]) {
+        for (const [label, tt] of /** @type {[string, D.Type][]} */ ([['key', a.keyType()], ['document', a.documentType()]])) {
             const hit = refsDropped(tt);
             if (hit) findings.push([`attachment ${a.identifier()}`, `${label} type : ${tt.representation()}`, hit]);
         }
@@ -1107,6 +1416,14 @@ function formatDropReport(src, directives, refsDropped) {
 
 
 // ------------------------------------------- definitions => definitions (target)
+/**
+ * Build the target `Definitions` from a source schema and the edit script (phase 1).
+ * @param {D.Definitions | D.DefinitionsConst} sourceDefs
+ * @param {TransformationDirectives} directives
+ * @returns {[D.Definitions, Record<string, D.Type>, Record<string, D.Attachment>]} the target,
+ *   the named-type map (src rid repr -> target Type) and the attachment map (src rid repr ->
+ *   target Attachment)
+ */
 export function buildTargetDefinitions(sourceDefs, directives) {
     for (const [, adds] of Object.entries(directives.addedFields))
         for (const [name, payload, derive] of adds) {
@@ -1119,12 +1436,22 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     refuseUnknownTargets(src, directives);            // a misspelt target would silently do nothing
     validateDimensionOps(src, directives);            // resize/transpose: direct-Vec/Mat + fill, up front
     const target = new V.Definitions();
+    /** @type {Record<string, D.Type>} */
     const tmap = {};
 
+    /**
+     * @param {NamedType} srcType
+     * @returns {string}
+     */
     const simple = (srcType) => {                     // target simple name after type rename
         const full = srcType.representation();
-        return (directives.typeRenames[full] ?? full).split('::').pop();
+        // split() yields at least one element, so pop() always has one to return
+        return /** @type {string} */ ((directives.typeRenames[full] ?? full).split('::').pop());
     };
+    /**
+     * @param {NamedType | D.Attachment} srcType
+     * @returns {D.NameSpace}
+     */
     const tgtNs = (srcType) => {                      // target namespace: name axis + uuid axis
         const ov = directives.typeNamespaces[srcType.representation()];
         if (ov !== undefined) return ov;              // per-definition move (split/precise-merge)
@@ -1134,47 +1461,63 @@ export function buildTargetDefinitions(sourceDefs, directives) {
         const newName = directives.namespaceNames[key] ?? sns.name();
         return new V.NameSpace(newUuid, newName);
     };
+    /** @param {D.Attachment} a */
     const attNs = (a) => {                            // attachment namespace: per-attachment move, else bulk
         const ov = attGet(directives.attachmentNamespaces, a);
         return ov !== undefined ? ov : tgtNs(a);
     };
 
     const ELEM = { optional: V.TypeOptional, vector: V.TypeVector, set: V.TypeSet, xarray: V.TypeXArray, key: V.TypeKey };
+    /** @typedef {keyof typeof ELEM} ElemKind */
+    /**
+     * @param {D.Type} t
+     * @returns {D.Type}
+     */
     const mapT = (t) => {
         const th = directives.transformedTypes[t.runtimeId().representation()];
         if (th !== undefined) return mapT(th[0]);     // global hook: substitute the new_type
         const tc = t.typeCode();
         if (['struct', 'enum', 'concept', 'club'].includes(tc)) return tmap[t.runtimeId().representation()];
-        if (tc in ELEM) return new ELEM[tc](mapT(ELEM[tc].cast(t).elementType()));
+        if (tc in ELEM) return new ELEM[/** @type {ElemKind} */ (tc)](mapT(ELEM[/** @type {ElemKind} */ (tc)].cast(t).elementType()));
         if (tc === 'map') { const m = V.TypeMap.cast(t); return new V.TypeMap(mapT(m.keyType()), mapT(m.elementType())); }
         if (tc === 'tuple') return new V.TypeTuple(V.TypeTuple.cast(t).types().map(mapT));
         if (tc === 'variant') return new V.TypeVariant(V.TypeVariant.cast(t).types().map(mapT));
         return t;
     };
+    /**
+     * @param {D.Type} t
+     * @returns {boolean}
+     */
     const ready = (t) => {
         const th = directives.transformedTypes[t.runtimeId().representation()];
         if (th !== undefined) return ready(th[0]);    // a hooked type is ready iff new_type is
         const tc = t.typeCode();
         if (['struct', 'enum', 'concept', 'club'].includes(tc)) return t.runtimeId().representation() in tmap;
-        if (tc in ELEM) return ready(ELEM[tc].cast(t).elementType());
+        if (tc in ELEM) return ready(ELEM[/** @type {ElemKind} */ (tc)].cast(t).elementType());
         if (tc === 'map') { const m = V.TypeMap.cast(t); return ready(m.keyType()) && ready(m.elementType()); }
         if (tc === 'tuple') return V.TypeTuple.cast(t).types().every(ready);
         if (tc === 'variant') return V.TypeVariant.cast(t).types().every(ready);
         return true;
     };
+    /** @param {D.Type} t */
     const hooked = (t) => t.runtimeId().representation() in directives.transformedTypes;   // maps to new_type
 
     const droppedTypes = directives.droppedTypes;
     const droppedAtts = directives.droppedAttachments;
+    /** @param {D.Type} t */
     const dropped = (t) => droppedTypes.has(t.representation());    // a named type removed by drop_type
 
+    /**
+     * @param {D.Type} t
+     * @returns {string | null}
+     */
     const refsDropped = (t) => {
         // The dropped type an effective target reference would dangle on, or null. Mirrors mapT.
         const th = directives.transformedTypes[t.runtimeId().representation()];
         if (th !== undefined) return refsDropped(th[0]);
         const tc = t.typeCode();
         if (['struct', 'enum', 'concept', 'club'].includes(tc)) return droppedTypes.has(t.representation()) ? t.representation() : null;
-        if (tc in ELEM) return refsDropped(ELEM[tc].cast(t).elementType());
+        if (tc in ELEM) return refsDropped(ELEM[/** @type {ElemKind} */ (tc)].cast(t).elementType());
         if (tc === 'map') { const m = V.TypeMap.cast(t); return refsDropped(m.keyType()) || refsDropped(m.elementType()); }
         if (tc === 'tuple' || tc === 'variant') {
             const cls = tc === 'tuple' ? V.TypeTuple : V.TypeVariant;
@@ -1194,12 +1537,14 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     //    target (namespace, name) slot. Detect ALL such clashes up front and report together.
     if (Object.keys(directives.typeNamespaces).length || Object.keys(directives.attachmentNamespaces).length
         || Object.keys(directives.namespaceNames).length || Object.keys(directives.namespaceUuids).length) {
+        /** @type {Record<string, string[]>} */
         const slots = {};
         for (const t of [...src.structures(), ...src.enumerations(), ...src.concepts(), ...src.clubs()]) {
             if (hooked(t) || dropped(t)) continue;
             (slots[`${tgtNs(t).name()}::${simple(t)}`] ??= []).push(t.representation());
         }
-        const clashes = Object.entries(slots).filter(([, s]) => s.length > 1).map(([rep, s]) => [rep, [...s].sort()]);
+        const clashes = Object.entries(slots).filter(([, s]) => s.length > 1).map(
+            /** @returns {[string, string[]]} */ ([rep, s]) => [rep, [...s].sort()]);
         if (clashes.length) {
             clashes.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
             const lines = clashes.map(([rep, s]) => `  ${rep}  <-  ${s.join(', ')}`).join('\n');
@@ -1208,16 +1553,17 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     }
 
     // concepts — topological by parent
+    /** @type {(D.TypeConcept | D.TypeStructure)[]} */
     let pending = [...src.concepts()].filter((c) => !hooked(c) && !dropped(c));
     while (pending.length) {
         const still = []; let progressed = false;
-        for (const c of pending) {
+        for (const c of /** @type {D.TypeConcept[]} */ (pending)) {
             const p = c.parent();
             if (p === null || p === undefined || p.runtimeId().representation() in tmap) {
                 const cdoc = directives.typeDocs[c.representation()] ?? c.documentation();
                 const nc = (p === null || p === undefined)
                     ? target.createConcept(tgtNs(c), simple(c), cdoc)
-                    : target.createConcept(tgtNs(c), simple(c), cdoc, tmap[p.runtimeId().representation()]);
+                    : target.createConcept(tgtNs(c), simple(c), cdoc, /** @type {D.TypeConcept} */ (tmap[p.runtimeId().representation()]));
                 tmap[c.runtimeId().representation()] = nc; progressed = true;
             } else still.push(c);
         }
@@ -1230,7 +1576,7 @@ export function buildTargetDefinitions(sourceDefs, directives) {
         if (hooked(cl) || dropped(cl)) continue;
         const ncl = target.createClub(tgtNs(cl), simple(cl), directives.typeDocs[cl.representation()] ?? cl.documentation());
         tmap[cl.runtimeId().representation()] = ncl;
-        for (const member of cl.members()) target.createMembership(ncl, tmap[member.runtimeId().representation()]);
+        for (const member of cl.members()) target.createMembership(ncl, /** @type {D.TypeConcept} */ (tmap[member.runtimeId().representation()]));
     }
 
     // enumerations — cases renamed / removed / added / reordered
@@ -1243,6 +1589,7 @@ export function buildTargetDefinitions(sourceDefs, directives) {
         // documentation (Class A): carried by TARGET case name, overridden by document_case
         // (named by SOURCE case name); added cases default to none.
         const authored = directives.caseDocs[e.representation()] ?? {};
+        /** @type {Record<string, string>} */
         const caseDocs = {};
         for (const c of e.cases()) if (!(c.name() in removed)) caseDocs[cren[c.name()] ?? c.name()] = authored[c.name()] ?? c.documentation();
         const order = directives.caseOrder[e.representation()];
@@ -1259,27 +1606,33 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     pending = [...src.structures()].filter((s) => !hooked(s) && !dropped(s));
     while (pending.length) {
         const still = []; let progressed = false;
-        for (const s of pending) {
+        for (const s of /** @type {D.TypeStructure[]} */ (pending)) {
             const retypes = directives.retypedFields[s.representation()] ?? {};
             const transformed = directives.transformedFields[s.representation()] ?? {};
             const adds = directives.addedFields[s.representation()] ?? [];
             const drops = directives.droppedFields[s.representation()] ?? new Set();
             // readiness follows the TARGET field type: a retype / transform / derived add to a
             // named type depends on that type being built.
+            /**
+             * @param {D.TypeStructureField} f
+             * @returns {D.Type}
+             */
             const dep = (f) => {
                 if (f.name() in transformed) return transformed[f.name()][0];
                 if (f.name() in retypes) return retypes[f.name()][0];
                 return f.type();
             };
             if (s.fields().filter((f) => !drops.has(f.name())).every((f) => ready(dep(f)))
-                && adds.filter(([, , derive]) => derive !== null && derive !== undefined).every(([, payload]) => ready(payload))) {
+                && adds.filter(([, , derive]) => derive !== null && derive !== undefined).every(([, payload]) => ready(/** @type {D.Type} */ (payload)))) {   // a derived add's payload is its Type
                 const fren = directives.fieldRenames[s.representation()] ?? {};
                 const resized = directives.resizedFields[s.representation()] ?? {};
                 const transposed = directives.transposedFields[s.representation()] ?? new Set();
                 const fdocs = directives.fieldDocs[s.representation()] ?? {};   // authored, by source name
+                /** @type {[string, D.Type | D.Value, string][]} */
                 let fields = [];                                    // [target name, Type | default Value, doc]
                 for (const f of s.fields()) {
                     if (drops.has(f.name())) continue;              // family 2: drop
+                    /** @type {D.Type | D.Value} */
                     let ftype;
                     if (f.name() in transformed) ftype = mapT(transformed[f.name()][0]);       // Class-C hook
                     else if (f.name() in resized) ftype = resizedType(s.representation(), f, resized[f.name()]);   // resize
@@ -1295,16 +1648,19 @@ export function buildTargetDefinitions(sourceDefs, directives) {
                     fields.push([fren[f.name()] ?? f.name(), ftype, fdocs[f.name()] ?? f.documentation()]);
                 }
                 for (const [name, payload, derive] of adds)         // family 2: add (static or derived)
-                    fields.push([name, (derive !== null && derive !== undefined) ? mapT(payload) : payload, fdocs[name] ?? '']);
+                    fields.push([name, (derive !== null && derive !== undefined) ? mapT(/** @type {D.Type} */ (payload)) : payload, fdocs[name] ?? '']);
                 const order = directives.fieldOrder[s.representation()];
                 if (order) {                                        // family 2: reorder
-                    const byName = Object.fromEntries(fields.map(([n, t, d]) => [n, [n, t, d]]));
+                    const byName = Object.fromEntries(fields.map(
+                        /** @returns {[string, [string, D.Type | D.Value, string]]} */ ([n, t, d]) => [n, [n, t, d]]));
                     if (!sameSet(order, Object.keys(byName)))
                         throw new Error(`reorderFields(${s.representation()}) not a permutation of ${Object.keys(byName)}`);
                     fields = order.map((n) => byName[n]);
                 }
                 const ds = new V.TypeStructureDescriptor(simple(s), directives.typeDocs[s.representation()] ?? s.documentation());
-                for (const [name, t, doc] of fields) ds.addField(name, t, doc);   // documentation carried (Class A)
+                // addField is one runtime entry for its two declared overloads (a Type, or a default
+                // Value that carries its type); this tuple holds either, so name one overload.
+                for (const [name, t, doc] of fields) ds.addField(name, /** @type {D.Type} */ (t), doc);   // documentation carried (Class A)
                 tmap[s.runtimeId().representation()] = target.createStructure(tgtNs(s), ds);
                 progressed = true;
             } else still.push(s);
@@ -1314,13 +1670,14 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     }
 
     // attachments — a named Map<Key, Document>: remap key + document types, rename id
+    /** @type {Record<string, D.Attachment>} */
     const attMap = {};
     for (const a of src.attachments()) {
         if (attHit(droppedAtts, a)) continue;              // drop_attachment: not recreated
         const local = a.identifier().slice(a.identifier().lastIndexOf('.') + 1);
         const renamed = attGet(directives.attachmentRenames, a, local);
         const name = renamed.slice(renamed.lastIndexOf('.') + 1);   // a new id may be qualified
-        const na = target.createAttachment(attNs(a), name, mapT(a.keyType()), mapT(a.documentType()),
+        const na = target.createAttachment(attNs(a), name, /** @type {D.AbstractionType} */ (mapT(a.keyType())), mapT(a.documentType()),
             attGet(directives.attachmentDocs, a, a.documentation()));
         attMap[a.runtimeId().representation()] = na;
     }
@@ -1328,6 +1685,10 @@ export function buildTargetDefinitions(sourceDefs, directives) {
     return [target, tmap, attMap];
 }
 
+/**
+ * @param {Iterable<string>} a
+ * @param {Iterable<string>} b
+ */
 function sameSet(a, b) {
     const sa = new Set(a); const sb = new Set(b);
     return sa.size === sb.size && [...sa].every((x) => sb.has(x));

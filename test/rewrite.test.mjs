@@ -8,14 +8,27 @@ import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { DefinitionsRewriter } from '../src/rewrite/index.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {[string, D.Type][]} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
+/**
+ * @param {DefinitionsRewriter} tr
+ * @param {D.Definitions} target
+ * @param {D.Value} value
+ * @param {D.Type} sourceType
+ */
 const rt = (tr, target, value, sourceType) =>
     V.Value.decode(V.Value.encode(value), tr.mapType(sourceType), target.const());
 
@@ -39,7 +52,7 @@ describe('engine — family 1 (renames)', () => {
         const d = new TransformationDirectives();
         d.renameType(c.representation(), 'Demo::UserAccount');
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const rk = tr.value(V.ValueKey.create(c, new V.ValueUUId('11111111-1111-1111-1111-111111111111')));
+        const rk = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(c, new V.ValueUUId('11111111-1111-1111-1111-111111111111'))));
         assert.equal(rk.typeConcept().representation(), 'Demo::UserAccount');
     });
 
@@ -54,7 +67,7 @@ describe('engine — family 1 (renames)', () => {
         vec.append(new V.ValueOptional(new V.TypeOptional(item), new V.ValueStructure(item, { qty: 3 })));
         vec.append(new V.ValueOptional(new V.TypeOptional(item)));
         const r = V.ValueVector.cast(tr.value(vec));
-        const got = V.ValueOptional.cast(r.at(0, false)).unwrap(false);
+        const got = /** @type {D.ValueStructure} */ (V.ValueOptional.cast(r.at(0, false)).unwrap(false));
         assert.equal(got.at('count'), 3);
         assert.ok(V.ValueOptional.cast(r.at(1, false)).isNil());
     });

@@ -18,6 +18,10 @@ import { definitionsMigrate } from '../src/definitions_migrate.mjs';
 
 // Import a transformation file by path; it must export buildDirectives(sourceDefs) ->
 // TransformationDirectives. Arbitrary code — the operator's own, no sandbox.
+/**
+ * @param {string} file
+ * @returns {Promise<import('../src/definitions_migrate.mjs').TransformationModule>}
+ */
 async function loadTransformation(file) {
     const mod = await import(pathToFileURL(path.resolve(file)).href);
     if (typeof mod.buildDirectives !== 'function') {
@@ -27,6 +31,7 @@ async function loadTransformation(file) {
     return mod;
 }
 
+/** @param {string} p */
 const expand = (p) => (p.startsWith('~') ? path.join(process.env.HOME ?? '', p.slice(1)) : p);
 
 async function main() {
@@ -65,7 +70,8 @@ async function main() {
     try {
         definitionsMigrate(sourceDir, module, outDir, { verify: !values['no-verify'] });
     } catch (exc) {
-        console.error(exc.message);
+        const e = /** @type {Error} */ (exc);
+        console.error(e.message);
         process.exit(1);
     }
     console.log(`patched ${sourceDir} -> ${outDir}`

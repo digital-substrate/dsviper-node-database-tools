@@ -4,4 +4,9 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-export default require('@digitalsubstrate/dsviper');
+// The JSDoc type lets TypeScript check the package against index.d.ts: createRequire alone
+// types what it loads as `any`, and every call through it would go unchecked.
+/** @type {typeof import('@digitalsubstrate/dsviper')} */
+const dsviper = require('@digitalsubstrate/dsviper');
+
+export default dsviper;

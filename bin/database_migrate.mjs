@@ -19,6 +19,13 @@ import * as migrateDatabase from '../src/migrate_database.mjs';
 import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
 import { DefinitionsRewriter, plan, formatPlan, formatReport } from '../src/rewrite/index.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { TransformationDirectives } from '../src/rewrite/directives.mjs' */
+
+/**
+ * @param {string} file
+ * @returns {Promise<(sourceDefs: D.DefinitionsConst) => TransformationDirectives>}
+ */
 async function loadBuildDirectives(file) {
     const mod = await import(pathToFileURL(path.resolve(file)).href);
     if (typeof mod.buildDirectives !== 'function') {
@@ -52,24 +59,35 @@ async function main() {
     const [migration, source, target] = positionals;
     if (!fs.existsSync(source)) { console.error(`No such file: ${source}`); process.exit(1); }
 
-    // dispatch on the source kind, once — the silo module + a read-only opener
+    // dispatch on the source kind, once — the silo module + a read-only opener, which pairs the
+    // opened source with its silo's dryRun
     let silo; let open;
-    if (V.CommitDatabase.isCompatible(source)) { silo = migrateCommitDatabase; open = () => V.CommitDatabase.open(source, true); }
-    else if (V.Database.isCompatible(source)) { silo = migrateDatabase; open = () => V.Database.open(source, true); }
-    else { console.error(`Not a dsviper Database or CommitDatabase: ${source}`); process.exit(1); }
+    if (V.CommitDatabase.isCompatible(source)) {
+        silo = migrateCommitDatabase;
+        open = () => {
+            const src = V.CommitDatabase.open(source, true);
+            return { src, dryRun: (/** @type {DefinitionsRewriter} */ rw) => migrateCommitDatabase.dryRun(src, rw) };
+        };
+    } else if (V.Database.isCompatible(source)) {
+        silo = migrateDatabase;
+        open = () => {
+            const src = V.Database.open(source, true);
+            return { src, dryRun: (/** @type {DefinitionsRewriter} */ rw) => migrateDatabase.dryRun(src, rw) };
+        };
+    } else { console.error(`Not a dsviper Database or CommitDatabase: ${source}`); process.exit(1); }
 
     const buildDirectives = await loadBuildDirectives(migration);
 
     // -- pre-flight (identify / inform): read-only, print, and exit before any write --
     if (values.plan || values['dry-run']) {
-        const src = open();
+        const { src, dryRun } = open();
         try {
             const directives = buildDirectives(src.definitions());
             if (values.plan) {
                 console.log(formatPlan(plan(src.definitions(), directives)));
             } else {                                          // --dry-run
                 const [rewriter] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
-                const info = silo.dryRun(src, rewriter);
+                const info = dryRun(rewriter);
                 const { diagnostics, ...counts } = info;
                 console.log(counts);                          // counts (documents/commits, drops, blobs, …)
                 if (diagnostics) console.log(formatReport(diagnostics));   // per-site loss, before -> after

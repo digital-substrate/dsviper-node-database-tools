@@ -9,25 +9,51 @@ import assert from 'node:assert/strict';
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives, DefinitionsRewriter, Unrepresentable } from '../src/rewrite/index.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { RetypePolicy, CollisionPolicy } from '../src/rewrite/directives.mjs' */
+
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 const U2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const INST = '11111111-1111-1111-1111-111111111111';
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {[string, D.Type][]} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {string[]} cases
+ */
 function enumT(defs, name, cases) {
     const d = new V.TypeEnumerationDescriptor(name);
     for (const c of cases) d.addCase(c);
     return defs.createEnumeration(NS, d);
 }
+/**
+ * @param {DefinitionsRewriter} tr
+ * @param {D.Definitions} target
+ * @param {D.Value} value
+ * @param {D.Type} sourceType
+ */
 const rt = (tr, target, value, sourceType) =>
     V.Value.decode(V.Value.encode(value), tr.mapType(sourceType), target.const());
 
 // retype a single field `f`; returns [rewriter, source struct]
+/**
+ * @param {D.Type} srcT
+ * @param {D.Type} tgtT
+ * @param {RetypePolicy} [policy]
+ * @param {CollisionPolicy | null} [collisions]
+ * @returns {[DefinitionsRewriter, D.TypeStructure]}
+ */
 function mkField(srcT, tgtT, policy = null, collisions = null) {
     const src = new V.Definitions();
     const s = struct(src, 'S', [['f', srcT]]);
@@ -38,6 +64,12 @@ function mkField(srcT, tgtT, policy = null, collisions = null) {
     return [rw, s];
 }
 // same, but also expose the built target (for round-tripping)
+/**
+ * @param {D.Type} srcT
+ * @param {D.Type} tgtT
+ * @param {RetypePolicy} [policy]
+ * @returns {[DefinitionsRewriter, D.Definitions, D.TypeStructure]}
+ */
 function mkFieldT(srcT, tgtT, policy = null) {
     const src = new V.Definitions();
     const s = struct(src, 'S', [['f', srcT]]);
@@ -51,6 +83,7 @@ describe('unknown directive targets', () => {
     // A directive names its target by its SOURCE name. A misspelling matches nothing, so the
     // directive never fires and the migration reports success having done nothing — the guard
     // turns that silence into one accumulated refusal, before anything is built.
+    /** @returns {[D.Definitions, D.TypeStructure, D.TypeEnumeration]} */
     function source() {
         const defs = new V.Definitions();
         const concept = defs.createConcept(NS, 'Customer');
@@ -69,7 +102,7 @@ describe('unknown directive targets', () => {
         d.renameCase(mode.representation(), 'Z', 'Y');
         d.dropAttachment('nope');
         d.acceptAttachmentDrops();
-        assert.throws(() => DefinitionsRewriter.fromDirectives(defs, d), (err) => {
+        assert.throws(() => DefinitionsRewriter.fromDirectives(defs, d), (/** @type {Error} */ err) => {
             assert.ok(err.message.includes('[unknown-target]'));
             assert.ok(err.message.includes('5 directive(s)'));   // every site, not the first
             assert.ok(err.message.includes('renameType'));
@@ -116,7 +149,7 @@ describe('family 1 — Any restamp + namespace axes', () => {
         d.renameType(s.representation(), 'Demo::PostalAddress');
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const r = tr.value(new V.ValueAny(new V.ValueStructure(s, { x: 7 })));
-        const inner = V.ValueAny.cast(r).unwrap(false);
+        const inner = /** @type {D.ValueStructure} */ (V.ValueAny.cast(r).unwrap(false));
         assert.equal(inner.type().representation(), 'Demo::PostalAddress');
         assert.equal(inner.at('x'), 7);
     });
@@ -139,7 +172,7 @@ describe('family 1 — Any restamp + namespace axes', () => {
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         assert.equal(tr.mapType(c).representation(), 'Demo::Account');
         assert.notEqual(tr.mapType(c).runtimeId().representation(), c.runtimeId().representation());
-        const rk = tr.value(V.ValueKey.create(c, new V.ValueUUId('44444444-4444-4444-4444-444444444444')));
+        const rk = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(c, new V.ValueUUId('44444444-4444-4444-4444-444444444444'))));
         assert.equal(rk.typeConcept().representation(), 'Demo::Account');
     });
 
@@ -190,7 +223,7 @@ describe('family 2 — Class A structural', () => {
         const vec = V.ValueVector.cast(out.at('tags', false));
         assert.equal(vec.size(), 3);
         const seen = [];
-        for (let i = 0; i < vec.size(); i++) seen.push(vec.at(i));
+        for (let i = 0; i < vec.size(); i++) seen.push(/** @type {number} */ (vec.at(i)));
         assert.deepEqual([...seen].sort((a, b) => a - b), [1, 2, 3]);
     });
 
@@ -249,7 +282,7 @@ describe('Class-B policies — remaining leaves', () => {
         const d = new TransformationDirectives();
         d.removeCase(e.representation(), 'Old', ['map-case', 'New']);
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const mv = tr.value(new V.ValueStructure(s, { m: new V.ValueEnumeration(e, 'Old') })).at('m', false);
+        const mv = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { m: new V.ValueEnumeration(e, 'Old') }))).at('m', false);
         assert.equal(V.ValueEnumeration.cast(mv).name(), 'New');
     });
 
@@ -258,6 +291,10 @@ describe('Class-B policies — remaining leaves', () => {
     // so `value()`/`_retypeElement` throw `v.type is not a function`. (Python's `items()`
     // returns Values.) Even a pure rename of a map<_, primitive> fails. Un-skip once fixed.
     it('map key collision — fail aborts; a winner discriminates', () => {
+        /**
+         * @param {CollisionPolicy | null} winner
+         * @returns {[DefinitionsRewriter, D.Definitions, D.TypeStructure, D.ValueMap]}
+         */
         const setup = (winner) => {
             const src = new V.Definitions();
             const ed = new V.TypeEnumerationDescriptor('Mode');
@@ -276,9 +313,10 @@ describe('Class-B policies — remaining leaves', () => {
         const [trF, , sF, mvF] = setup(null);
         assert.throws(() => trF.value(new V.ValueStructure(sF, { cfgs: mvF }))); // fail (default) aborts
 
+        /** @param {CollisionPolicy} winner */
         const survivor = (winner) => {
             const [tr, target, s, mv] = setup(winner);
-            const om = V.ValueMap.cast(tr.value(new V.ValueStructure(s, { cfgs: mv })).at('cfgs', false));
+            const om = V.ValueMap.cast(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { cfgs: mv }))).at('cfgs', false));
             assert.equal(om.size(), 1);
             const tgtEnum = target.const().enumerations()[0];
             return om.at(new V.ValueEnumeration(tgtEnum, 'New'));
@@ -288,6 +326,12 @@ describe('Class-B policies — remaining leaves', () => {
 });
 
 describe('Class-B policy composition (unwrap + narrow/parse)', () => {
+    /**
+     * @param {D.Type} tgt
+     * @param {RetypePolicy} policy
+     * @param {D.Type} srcElem
+     * @returns {[DefinitionsRewriter, D.TypeStructure]}
+     */
     const optRetype = (tgt, policy, srcElem) => {
         const src = new V.Definitions();
         const s = struct(src, 'W', [['x', new V.TypeOptional(srcElem)]]);
@@ -296,9 +340,15 @@ describe('Class-B policy composition (unwrap + narrow/parse)', () => {
         const [rw] = DefinitionsRewriter.fromDirectives(src, d);
         return [rw, s];
     };
+    /**
+     * @param {DefinitionsRewriter} rw
+     * @param {D.TypeStructure} s
+     * @param {D.Type} srcElem
+     * @param {D.InputValue} n
+     */
     const run = (rw, s, srcElem, n) => {
         const ot = new V.TypeOptional(srcElem);
-        return rw.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot, n) })).at('x');
+        return /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot, n) }))).at('x');
     };
 
     it('unwrap then narrow (saturate)', () => {
@@ -325,6 +375,10 @@ describe('Class-B policy composition (unwrap + narrow/parse)', () => {
 });
 
 describe('float -> int (Class B: truncate toward zero, then policy)', () => {
+    /**
+     * @param {RetypePolicy} policy
+     * @returns {[DefinitionsRewriter, D.TypeStructure]}
+     */
     const mk = (policy) => {
         const src = new V.Definitions();
         const s = struct(src, 'M', [['d', T.DOUBLE]]);
@@ -333,7 +387,12 @@ describe('float -> int (Class B: truncate toward zero, then policy)', () => {
         const [r] = DefinitionsRewriter.fromDirectives(src, d);
         return [r, s];
     };
-    const go = (r, s, v) => r.value(new V.ValueStructure(s, { d: v })).at('d');
+    /**
+     * @param {DefinitionsRewriter} r
+     * @param {D.TypeStructure} s
+     * @param {number} v
+     */
+    const go = (r, s, v) => /** @type {D.ValueStructure} */ (r.value(new V.ValueStructure(s, { d: v }))).at('d');
 
     it('truncates toward zero (in range: policy never fires)', () => {
         const [r, s] = mk('fail');
@@ -437,8 +496,8 @@ describe('containers verbatim + attachments + key instance id', () => {
             label: 'x',
         });
         const back = V.ValueStructure.cast(rt(tr, target, tr.value(doc), s));
-        assert.deepEqual(V.Value.dumps(back.at('p', false)), [1, 2, 3]);
-        assert.deepEqual(V.Value.dumps(back.at('m', false)), [[1, 2], [3, 4]]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('p', false))), [1, 2, 3]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('m', false))), [[1, 2], [3, 4]]);
     });
 
     it('attachment created and renamed; runtimeId matches, data migrates', () => {
@@ -453,7 +512,7 @@ describe('containers verbatim + attachments + key instance id', () => {
         const tatt = target.const().attachments()[0];
         assert.equal(tatt.identifier().split('.').pop(), 'OrderLog');
         assert.equal(tatt.runtimeId().representation(), tr.attachment(att).runtimeId().representation());
-        const r = tr.value(new V.ValueStructure(sDoc, { qty: 5 }));
+        const r = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(sDoc, { qty: 5 })));
         assert.equal(r.at('count'), 5);
     });
 
@@ -478,7 +537,7 @@ describe('containers verbatim + attachments + key instance id', () => {
         const byId = new Map(target.const().attachments().map((a) => [a.identifier(), a]));
         assert.deepEqual(new Set(byId.keys()),
             new Set([`${NS.name()}::Customer.orders`, `${NS.name()}::Vendor.supplierOrders`]));
-        assert.equal(byId.get(`${NS.name()}::Customer.orders`).documentation(), 'kept, re-documented');
+        assert.equal(/** @type {D.Attachment} */ (byId.get(`${NS.name()}::Customer.orders`)).documentation(), 'kept, re-documented');
 
         const legacy = new TransformationDirectives();
         legacy.renameAttachment('orders', 'everyOne');      // the local name: ambiguous, hits both
@@ -493,7 +552,7 @@ describe('containers verbatim + attachments + key instance id', () => {
         const d = new TransformationDirectives();
         d.renameType('Demo::Material', 'Demo::Stuff');
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = tr.value(V.ValueKey.create(concept, new V.ValueUUId(INST)));
+        const out = /** @type {D.ValueKey} */ (tr.value(V.ValueKey.create(concept, new V.ValueUUId(INST))));
         assert.equal(out.instanceId().representation(), INST);
     });
 });
@@ -511,7 +570,7 @@ describe('value-level robustness — Set injective rename', () => {
         const st = new V.ValueSet(new V.TypeSet(e));
         st.add(new V.ValueEnumeration(e, 'A'));
         st.add(new V.ValueEnumeration(e, 'B'));
-        const out = V.ValueSet.cast(tr.value(new V.ValueStructure(s, { modes: st })).at('modes', false));
+        const out = V.ValueSet.cast(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { modes: st }))).at('modes', false));
         assert.equal(out.size(), 2);
     });
 });
@@ -521,20 +580,20 @@ describe('Vec/Mat element retype (fixed dims)', () => {
         const [rw, target, s] = mkFieldT(new V.TypeVec(T.INT32, 3), new V.TypeVec(T.INT64, 3));
         const doc = new V.ValueStructure(s, { f: new V.ValueVec(new V.TypeVec(T.INT32, 3), [1, 2, 3]) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
-        assert.deepEqual(V.Value.dumps(back.at('f', false)), [1n, 2n, 3n]);
-        assert.equal(back.at('f', false).type().representation(), 'vec<int64, 3>');
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('f', false))), [1n, 2n, 3n]);
+        assert.equal(/** @type {D.Value} */ (back.at('f', false)).type().representation(), 'vec<int64, 3>');
     });
     it('Mat element widening is lossless (Class A)', () => {
         const [rw, target, s] = mkFieldT(new V.TypeMat(T.FLOAT, 2, 2), new V.TypeMat(T.DOUBLE, 2, 2));
         const doc = new V.ValueStructure(s, { f: new V.ValueMat(new V.TypeMat(T.FLOAT, 2, 2), [[1, 2], [3, 4]]) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
-        assert.deepEqual(V.Value.dumps(back.at('f', false)), [[1, 2], [3, 4]]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('f', false))), [[1, 2], [3, 4]]);
     });
     it('Vec element narrowing saturates per element', () => {
         const [rw, target, s] = mkFieldT(new V.TypeVec(T.INT64, 3), new V.TypeVec(T.INT32, 3), 'saturate');
         const doc = new V.ValueStructure(s, { f: new V.ValueVec(new V.TypeVec(T.INT64, 3), [2n ** 40n, 5n, -(2n ** 40n)]) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
-        assert.deepEqual(V.Value.dumps(back.at('f', false)), [2 ** 31 - 1, 5, -(2 ** 31)]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('f', false))), [2 ** 31 - 1, 5, -(2 ** 31)]);
     });
     it('Vec element narrowing needs a policy', () => {
         assert.throws(() => mkFieldT(new V.TypeVec(T.INT64, 3), new V.TypeVec(T.INT32, 3)), /policy/);
@@ -552,7 +611,7 @@ describe('Vec/Mat element retype (fixed dims)', () => {
         d.renameField(s.representation(), 'label', 'name');
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const doc = new V.ValueStructure(s, { p: new V.ValueVec(new V.TypeVec(T.FLOAT, 3), [1, 2, 3]), label: 'x' });
-        assert.deepEqual(V.Value.dumps(tr.value(doc).at('p', false)), [1, 2, 3]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (/** @type {D.ValueStructure} */ (tr.value(doc)).at('p', false))), [1, 2, 3]);
     });
 });
 
@@ -561,7 +620,7 @@ describe('the Vector bridge', () => {
         const [rw, target, s] = mkFieldT(new V.TypeVec(T.INT32, 4), new V.TypeVector(T.INT32));
         const doc = new V.ValueStructure(s, { f: new V.ValueVec(new V.TypeVec(T.INT32, 4), [10, 20, 30, 40]) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
-        assert.deepEqual(V.Value.dumps(back.at('f', false)), [10, 20, 30, 40]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('f', false))), [10, 20, 30, 40]);
     });
     it('Mat -> Vector flatten is column-major', () => {
         const [rw, target, s] = mkFieldT(new V.TypeMat(T.INT32, 2, 3), new V.TypeVector(T.INT32));
@@ -569,9 +628,11 @@ describe('the Vector bridge', () => {
         let n = 0;
         for (let c = 0; c < 2; c++) for (let r = 0; r < 3; r++) mat.set(c, r, n++);
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(new V.ValueStructure(s, { f: mat })), s));
-        assert.deepEqual(V.Value.dumps(back.at('f', false)), [0, 1, 2, 3, 4, 5]);
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (back.at('f', false))), [0, 1, 2, 3, 4, 5]);
     });
+    /** @param {RetypePolicy} policy */
     const vectorToVec = (policy) => mkField(new V.TypeVector(T.INT32), new V.TypeVec(T.INT32, 4), policy);
+    /** @param {...number} xs */
     const vvecOf = (...xs) => {
         const v = new V.ValueVector(new V.TypeVector(T.INT32));
         for (const x of xs) v.append(x);
@@ -579,15 +640,15 @@ describe('the Vector bridge', () => {
     };
     it('Vector -> Vec at exact length', () => {
         const [rw, s] = vectorToVec('fail');
-        const out = rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2, 3, 4) }));
-        assert.deepEqual(V.Value.dumps(out.at('f', false)), [1, 2, 3, 4]);
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2, 3, 4) })));
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (out.at('f', false))), [1, 2, 3, 4]);
     });
     it('Vector -> Vec fit pads short and truncates long', () => {
         const [rw, s] = vectorToVec(['fit', 0]);
-        const short = rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2) }));
-        assert.deepEqual(V.Value.dumps(short.at('f', false)), [1, 2, 0, 0]);
-        const long = rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2, 3, 4, 5, 6) }));
-        assert.deepEqual(V.Value.dumps(long.at('f', false)), [1, 2, 3, 4]);
+        const short = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2) })));
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (short.at('f', false))), [1, 2, 0, 0]);
+        const long = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: vvecOf(1, 2, 3, 4, 5, 6) })));
+        assert.deepEqual(V.Value.dumps(/** @type {D.Value} */ (long.at('f', false))), [1, 2, 3, 4]);
     });
     it('Vector -> Vec fail on a length mismatch', () => {
         const [rw, s] = vectorToVec('fail');
@@ -654,16 +715,23 @@ describe('add_field defaults — domain-free gate', () => {
 });
 
 describe('Vec/Mat dimension directives', () => {
+    /** @param {...number} xs */
     const vecOf = (...xs) => {
         const v = new V.ValueVec(new V.TypeVec(T.INT32, xs.length));
         xs.forEach((x, i) => v.set(i, x));
         return v;
     };
+    /** @param {number[][]} cols */
     const matOf = (cols) => {
         const m = new V.ValueMat(new V.TypeMat(T.INT32, cols.length, cols[0].length));
         cols.forEach((col, c) => col.forEach((x, r) => m.set(c, r, x)));
         return m;
     };
+    /**
+     * @param {D.Type} srcT
+     * @param {(d: TransformationDirectives, structRepr: string) => void} build
+     * @param {D.Value} value
+     */
     const run = (srcT, build, value) => {
         const src = new V.Definitions();
         const s = struct(src, 'S', [['f', srcT]]);
@@ -671,7 +739,7 @@ describe('Vec/Mat dimension directives', () => {
         build(d, s.representation());
         const [rw, target] = DefinitionsRewriter.fromDirectives(src, d);
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(new V.ValueStructure(s, { f: value })), s));
-        return V.Value.dumps(back.at('f', false));
+        return V.Value.dumps(/** @type {D.Value} */ (back.at('f', false)));
     };
 
     it('resize Vec grow: zero-fill and scalar-fill', () => {
@@ -711,6 +779,7 @@ describe('Vec/Mat dimension directives', () => {
         const src = new V.Definitions();
         const s = struct(src, 'S', [['f', new V.TypeVec(T.INT32, 3)]]);
         const d = new TransformationDirectives();
+        // @ts-expect-error identity is Mat-only: the refusal of a Vec identity fill is the point
         d.resizeVecField(s.representation(), 'f', 5, { fill: 'identity' });
         assert.throws(() => DefinitionsRewriter.fromDirectives(src, d), /identity is Mat-only/);
     });
@@ -733,7 +802,17 @@ describe('Vec/Mat dimension directives', () => {
 describe('variant arm-set via retypeField', () => {
     const IS = () => new V.TypeVariant([T.INT32, T.STRING]);
     const ISD = () => new V.TypeVariant([T.INT32, T.STRING, T.DOUBLE]);
+    /**
+     * @param {D.TypeVariant} vt
+     * @param {D.Value} val
+     */
     const wrapV = (vt, val) => { const vv = new V.ValueVariant(vt); vv.wrap(val); return vv; };
+    /**
+     * @param {D.TypeVariant} srcV
+     * @param {D.Type} tgtV
+     * @param {RetypePolicy} [policy]
+     * @returns {[DefinitionsRewriter, D.Definitions, D.TypeStructure]}
+     */
     const mk = (srcV, tgtV, policy = null) => {
         const src = new V.Definitions();
         const s = struct(src, 'S', [['v', srcV]]);
@@ -748,7 +827,7 @@ describe('variant arm-set via retypeField', () => {
         const doc = new V.ValueStructure(s, { v: wrapV(IS(), new V.ValueInt32(42)) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
         const out = V.ValueVariant.cast(back.at('v', false));
-        assert.equal(V.Value.dumps(out.unwrap(false)), 42);
+        assert.equal(V.Value.dumps(/** @type {D.Value} */ (out.unwrap(false))), 42);
         assert.equal(out.type().representation(), 'int32|string|double');
     });
     it('reordering arms preserves the value (index-safe)', () => {
@@ -756,7 +835,7 @@ describe('variant arm-set via retypeField', () => {
         const doc = new V.ValueStructure(s, { v: wrapV(IS(), new V.ValueString('hi')) });
         const back = V.ValueStructure.cast(rt(rw, target, rw.value(doc), s));
         const out = V.ValueVariant.cast(back.at('v', false));
-        assert.equal(V.Value.dumps(out.unwrap(false)), 'hi');
+        assert.equal(V.Value.dumps(/** @type {D.Value} */ (out.unwrap(false))), 'hi');
         assert.equal(out.type().representation(), 'string|int32');
     });
     it('removing an arm needs a policy', () => {
@@ -765,14 +844,14 @@ describe('variant arm-set via retypeField', () => {
     it('remove-arm drop-record skips the offender, keeps survivors', () => {
         const [rw, , s] = mk(ISD(), IS(), 'drop-record');
         assert.throws(() => rw.value(new V.ValueStructure(s, { v: wrapV(ISD(), new V.ValueDouble(1.5)) })), Unrepresentable);
-        const surv = rw.value(new V.ValueStructure(s, { v: wrapV(ISD(), new V.ValueInt32(7)) }));
-        assert.equal(V.Value.dumps(V.ValueVariant.cast(surv.at('v', false)).unwrap(false)), 7);
+        const surv = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { v: wrapV(ISD(), new V.ValueInt32(7)) })));
+        assert.equal(V.Value.dumps(/** @type {D.Value} */ (V.ValueVariant.cast(surv.at('v', false)).unwrap(false))), 7);
     });
     it('remove-arm default replaces the offender', () => {
         const dflt = wrapV(IS(), new V.ValueString('n/a'));
         const [rw, , s] = mk(ISD(), IS(), ['default', dflt]);
-        const out = rw.value(new V.ValueStructure(s, { v: wrapV(ISD(), new V.ValueDouble(1.5)) }));
-        assert.equal(V.Value.dumps(V.ValueVariant.cast(out.at('v', false)).unwrap(false)), 'n/a');
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { v: wrapV(ISD(), new V.ValueDouble(1.5)) })));
+        assert.equal(V.Value.dumps(/** @type {D.Value} */ (V.ValueVariant.cast(out.at('v', false)).unwrap(false))), 'n/a');
     });
     it('variant -> non-variant is refused', () => {
         assert.throws(() => mk(IS(), T.INT32, 'fail'), /variant/);
@@ -793,20 +872,24 @@ describe('Class-C hooks — transformField (struct-scoped)', () => {
         const src = new V.Definitions();
         const s = struct(src, 'Money', [['amount', T.INT32], ['scale', T.INT32]]);
         const d = new TransformationDirectives();
-        d.transformField(s.representation(), 'amount', T.INT32, (st, f) => new V.ValueInt32(st.at(f) * st.at('scale')));
+        d.transformField(s.representation(), 'amount', T.INT32, (st, f) => new V.ValueInt32(/** @type {number} */ (st.at(f)) * /** @type {number} */ (st.at('scale'))));
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = tr.value(new V.ValueStructure(s, { amount: 3, scale: 100 }));
+        const out = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { amount: 3, scale: 100 })));
         assert.equal(out.at('amount'), 300);
     });
     it('one fn reused across fields via the field name', () => {
         const src = new V.Definitions();
         const s = struct(src, 'S', [['a', T.INT32], ['b', T.INT32]]);
+        /**
+         * @param {D.ValueStructure} st
+         * @param {string} f
+         */
         const tag = (st, f) => new V.ValueString(f + '=' + st.at(f));
         const d = new TransformationDirectives();
         d.transformField(s.representation(), 'a', T.STRING, tag);
         d.transformField(s.representation(), 'b', T.STRING, tag);
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = tr.value(new V.ValueStructure(s, { a: 1, b: 2 }));
+        const out = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { a: 1, b: 2 })));
         assert.equal(out.at('a'), 'a=1');
         assert.equal(out.at('b'), 'b=2');
     });
@@ -815,6 +898,11 @@ describe('Class-C hooks — transformField (struct-scoped)', () => {
         const foo = struct(src, 'Foo', [['a', T.INT32]]);
         const bar = struct(src, 'Bar', [['label', T.STRING]]);
         const host = struct(src, 'Host', [['meta', foo]]);
+        /**
+         * @param {D.ValueStructure} st
+         * @param {string} f
+         * @param {D.Type} barT
+         */
         const fooToBar = (st, f, barT) => {
             const a = V.ValueStructure.cast(st.at(f, false)).at('a');
             return new V.ValueStructure(V.TypeStructure.cast(barT), { label: `a=${a}` });
@@ -840,6 +928,7 @@ describe('Class-C hooks — transformField (struct-scoped)', () => {
         const src = new V.Definitions();
         const s = struct(src, 'S', [['n', T.INT32]]);
         const d = new TransformationDirectives();
+        // @ts-expect-error a hook that returns a non-Value: its refusal is the point
         d.transformField(s.representation(), 'n', T.STRING, () => 'raw js str');
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         assert.throws(() => tr.value(new V.ValueStructure(s, { n: 42 })), /must return a Value/);
@@ -887,11 +976,13 @@ describe('Class-C hooks — addField derive (struct-scoped)', () => {
 });
 
 describe('Class-C hooks — transformType (global, value-scoped)', () => {
+    /** @returns {[D.Definitions, D.TypeStructure]} */
     const fooDefs = () => {
         const src = new V.Definitions();
         const foo = struct(src, 'Foo', [['a', T.INT32]]);
         return [src, foo];
     };
+    /** @param {D.Value} v */
     const fooToStr = (v) => new V.ValueString('a=' + V.ValueStructure.cast(v).at('a'));
 
     it('one directive transforms every occurrence of the type', () => {
@@ -900,7 +991,7 @@ describe('Class-C hooks — transformType (global, value-scoped)', () => {
         const d = new TransformationDirectives();
         d.transformType(foo, T.STRING, fooToStr);
         const [tr, target] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = tr.value(new V.ValueStructure(host, { x: new V.ValueStructure(foo, { a: 1 }), y: new V.ValueStructure(foo, { a: 2 }) }));
+        const out = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(host, { x: new V.ValueStructure(foo, { a: 1 }), y: new V.ValueStructure(foo, { a: 2 }) })));
         assert.equal(out.at('x'), 'a=1');
         assert.equal(out.at('y'), 'a=2');
         assert.ok(!target.const().structures().map((s) => s.representation()).includes('Demo::Foo'));
@@ -927,7 +1018,7 @@ describe('Class-C hooks — transformType (global, value-scoped)', () => {
         d.transformType(foo, T.STRING, fooToStr);
         d.transformField(host.representation(), 'x', T.INT32, () => new V.ValueInt32(999));
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = tr.value(new V.ValueStructure(host, { x: new V.ValueStructure(foo, { a: 1 }), y: new V.ValueStructure(foo, { a: 2 }) }));
+        const out = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(host, { x: new V.ValueStructure(foo, { a: 1 }), y: new V.ValueStructure(foo, { a: 2 }) })));
         assert.equal(out.at('x'), 999);       // field hook wins
         assert.equal(out.at('y'), 'a=2');      // type hook fallback
     });
@@ -935,6 +1026,10 @@ describe('Class-C hooks — transformType (global, value-scoped)', () => {
         const [src, foo] = fooDefs();
         const bar = struct(src, 'Bar', [['label', T.STRING]]);
         const host = struct(src, 'Host', [['m', foo]]);
+        /**
+         * @param {D.Value} v
+         * @param {D.Type} barT
+         */
         const fooToBar = (v, barT) => {
             const a = V.ValueStructure.cast(v).at('a');
             return new V.ValueStructure(V.TypeStructure.cast(barT), { label: `a=${a}` });
@@ -942,13 +1037,14 @@ describe('Class-C hooks — transformType (global, value-scoped)', () => {
         const d = new TransformationDirectives();
         d.transformType(foo, bar, fooToBar);
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        const out = V.ValueStructure.cast(tr.value(new V.ValueStructure(host, { m: new V.ValueStructure(foo, { a: 7 }) })).at('m', false));
+        const out = V.ValueStructure.cast(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(host, { m: new V.ValueStructure(foo, { a: 7 }) }))).at('m', false));
         assert.equal(out.type().representation(), 'Demo::Bar');
         assert.equal(out.at('label'), 'a=7');
     });
 });
 
 describe('documentation carry & authoring (Class A, outside runtimeId)', () => {
+    /** @returns {[D.Definitions, D.TypeEnumeration, D.TypeStructure]} */
     const docDefs = () => {
         const defs = new V.Definitions();
         const cust = defs.createConcept(NS, 'Customer', 'a customer');
@@ -964,7 +1060,14 @@ describe('documentation carry & authoring (Class A, outside runtimeId)', () => {
         defs.createAttachment(NS, 'Orders', cust, od, 'the orders');
         return [defs, en, od];
     };
-    const pick = (list, suffix) => list.find((x) => x.representation().endsWith(suffix));
+    // every caller dereferences the pick at once, so an absent match fails right there
+    /**
+     * @template {D.Type} T
+     * @param {T[]} list
+     * @param {string} suffix
+     * @returns {T}
+     */
+    const pick = (list, suffix) => /** @type {T} */ (list.find((x) => x.representation().endsWith(suffix)));
 
     it('a rename carries documentation everywhere', () => {
         const [defs, en, od] = docDefs();
@@ -1036,6 +1139,7 @@ describe('documentation carry & authoring (Class A, outside runtimeId)', () => {
 });
 
 describe('definition-level drops', () => {
+    /** @returns {[D.Definitions, D.TypeStructure, D.TypeStructure, D.TypeStructure]} */
     const dropDefs = () => {
         const defs = new V.Definitions();
         const cust = defs.createConcept(NS, 'Customer');
@@ -1049,6 +1153,7 @@ describe('definition-level drops', () => {
         defs.createAttachment(NS, 'Orders', cust, order);
         return [defs, lineitem, inv, order];
     };
+    /** @param {D.Definitions} defs */
     const names = (defs) => new Set(defs.const().structures().map((s) => s.representation().split('::').pop()));
 
     it('an unreferenced dropped type is omitted', () => {
@@ -1062,7 +1167,7 @@ describe('definition-level drops', () => {
     it('a referenced drop reports every dangling site at once', () => {
         const [defs, lineitem] = dropDefs();
         const d = new TransformationDirectives(); d.dropType(lineitem.representation());
-        assert.throws(() => DefinitionsRewriter.fromDirectives(defs.const(), d), (e) => {
+        assert.throws(() => DefinitionsRewriter.fromDirectives(defs.const(), d), (/** @type {Error} */ e) => {
             assert.match(e.message, /dropped-type-referenced/);
             assert.match(e.message, /3 dangling/);
             assert.match(e.message, /Demo::Invoice/);
@@ -1124,8 +1229,8 @@ describe('namespace move / split / merge', () => {
         defs.createStructure(SHOP, iv);
         const dr = new TransformationDirectives(); dr.moveType(o.representation(), ORDERS);
         const [, tgt] = DefinitionsRewriter.fromDirectives(defs.const(), dr);
-        const inv = V.TypeStructure.cast(tgt.const().structures().find((s) => s.representation().endsWith('Invoice')));
-        const line = inv.fields().find((f) => f.name() === 'line');
+        const inv = V.TypeStructure.cast(/** @type {D.TypeStructure} */ (tgt.const().structures().find((s) => s.representation().endsWith('Invoice'))));
+        const line = /** @type {D.TypeStructureField} */ (inv.fields().find((f) => f.name() === 'line'));
         assert.equal(line.type().representation(), 'Orders::Order');
     });
     it('a collision is reported', () => {
@@ -1138,7 +1243,7 @@ describe('namespace move / split / merge', () => {
         dr.moveType(oa.representation(), ORDERS);
         dr.moveType(ob.representation(), ORDERS);
         dr.renameType(ob.representation(), 'Shop::Order');
-        assert.throws(() => DefinitionsRewriter.fromDirectives(defs.const(), dr), (e) => {
+        assert.throws(() => DefinitionsRewriter.fromDirectives(defs.const(), dr), (/** @type {Error} */ e) => {
             assert.match(e.message, /namespace-collision/);
             assert.match(e.message, /Orders::Order/);
             assert.match(e.message, /Shop::Order/);
@@ -1152,13 +1257,13 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
     it('Set element widening is Class A (no policy)', () => {
         const [rw, s] = mkField(new V.TypeSet(T.INT32), new V.TypeSet(T.INT64));
         const set = new V.ValueSet(new V.TypeSet(T.INT32)); set.add(1); set.add(2);
-        const out = V.ValueSet.cast(rw.value(new V.ValueStructure(s, { f: set })).at('f', false));
-        assert.deepEqual(V.Value.dumps(out).map(BigInt).sort((a, b) => Number(a - b)), [1n, 2n]);
+        const out = V.ValueSet.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: set }))).at('f', false));
+        assert.deepEqual(/** @type {bigint[]} */ (V.Value.dumps(out)).map(BigInt).sort((a, b) => Number(a - b)), [1n, 2n]);
     });
     it('Vector element narrowing saturates per element', () => {
         const [rw, s] = mkField(new V.TypeVector(T.INT64), new V.TypeVector(T.INT32), 'saturate');
         const vec = new V.ValueVector(new V.TypeVector(T.INT64)); vec.append(1n); vec.append(2n ** 40n);
-        const out = V.ValueVector.cast(rw.value(new V.ValueStructure(s, { f: vec })).at('f', false));
+        const out = V.ValueVector.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: vec }))).at('f', false));
         assert.deepEqual(V.Value.dumps(out), [1, 2 ** 31 - 1]);
     });
     // SKIP: same engine map bug as above — a map<_, primitive> migration reads native values
@@ -1166,7 +1271,7 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
     it('Map value narrowing saturates', () => {
         const [rw, s] = mkField(new V.TypeMap(T.STRING, T.INT64), new V.TypeMap(T.STRING, T.INT32), 'saturate');
         const mp = new V.ValueMap(new V.TypeMap(T.STRING, T.INT64)); mp.set('a', 2n ** 40n); mp.set('b', 3n);
-        const out = V.ValueMap.cast(rw.value(new V.ValueStructure(s, { f: mp })).at('f', false));
+        const out = V.ValueMap.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: mp }))).at('f', false));
         assert.equal(out.at('a'), 2 ** 31 - 1);
         assert.equal(out.at('b'), 3);
     });
@@ -1175,7 +1280,7 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
         const x = new V.ValueXArray(new V.TypeXArray(T.INT64));
         x.insert(V.ValueXArray.END, 5n, new V.ValueUUId('00000001-0000-0000-0000-000000000001'));
         x.insert(V.ValueXArray.END, 2n ** 40n, new V.ValueUUId('00000001-0000-0000-0000-000000000002'));
-        const out = V.ValueXArray.cast(rw.value(new V.ValueStructure(s, { f: x })).at('f', false)).toVector();
+        const out = V.ValueXArray.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: x }))).at('f', false)).toVector();
         assert.deepEqual(V.Value.dumps(out), [5, 2 ** 31 - 1]);
     });
     it('element narrowing without a policy is refused', () => {
@@ -1189,7 +1294,7 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
     it('a set collapse resolves with a winner', () => {
         const [rw, s] = mkField(new V.TypeSet(T.INT64), new V.TypeSet(T.INT32), 'saturate', 'first');
         const set = new V.ValueSet(new V.TypeSet(T.INT64)); set.add(2n ** 40n); set.add(2n ** 41n);
-        const out = V.ValueSet.cast(rw.value(new V.ValueStructure(s, { f: set })).at('f', false));
+        const out = V.ValueSet.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: set }))).at('f', false));
         assert.deepEqual(V.Value.dumps(out), [2 ** 31 - 1]);
     });
     it('a nested-container narrowing is policied through the recursion', () => {
@@ -1199,7 +1304,7 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
         const inner = new V.ValueSet(sv);
         const iv = new V.ValueVector(new V.TypeVector(T.INT64)); iv.append(1n); iv.append(2n ** 40n);
         inner.add(iv);
-        const out = V.ValueSet.cast(rw.value(new V.ValueStructure(s, { f: inner })).at('f', false));
+        const out = V.ValueSet.cast(/** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: inner }))).at('f', false));
         assert.deepEqual(V.Value.dumps(out), [[1, 2 ** 31 - 1]]);
     });
     it('a nested-container narrowing without a policy is refused', () => {
@@ -1212,6 +1317,7 @@ describe('container element retype (Set/Vector/Map/XArray<A> -> <B>)', () => {
 describe('property-based (fuzzed) totality', () => {
     const SEED = 20260714;
     const N = 200;
+    /** @returns {[D.Definitions, D.TypeStructure]} */
     const richSource = () => {
         const src = new V.Definitions();
         const concept = src.createConcept(NS, 'Thing');

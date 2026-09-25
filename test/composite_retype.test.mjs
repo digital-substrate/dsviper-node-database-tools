@@ -5,19 +5,37 @@ import assert from 'node:assert/strict';
 
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives, DefinitionsRewriter } from '../src/rewrite/index.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @typedef {Parameters<TransformationDirectives['retypeField']>[3]} RetypePolicy */
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {Array<[string, D.Type]>} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {string[]} cases
+ */
 function enumT(defs, name, cases) {
     const d = new V.TypeEnumerationDescriptor(name);
     for (const c of cases) d.addCase(c);
     return defs.createEnumeration(NS, d);
 }
+/**
+ * @param {D.Type} srcT
+ * @param {D.Type} tgtT
+ * @param {RetypePolicy} [policy]
+ * @returns {[DefinitionsRewriter, D.TypeStructure]}
+ */
 function mk(srcT, tgtT, policy = null) {
     const src = new V.Definitions();
     const s = struct(src, 'S', [['f', srcT]]);
@@ -31,17 +49,17 @@ describe('Optional / Tuple element retype', () => {
     it('optional widen int32->int64 is Class A (no policy)', () => {
         const O32 = new V.TypeOptional(T.INT32); const O64 = new V.TypeOptional(T.INT64);
         const [rw, s] = mk(O32, O64);
-        const out = rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O32, V.Value.create(T.INT32, 7)) }));
-        assert.equal(out.at('f', false).unwrap(true), 7n);
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O32, V.Value.create(T.INT32, 7)) })));
+        assert.equal(/** @type {D.ValueOptional} */ (out.at('f', false)).unwrap(true), 7n);
     });
 
     it('optional narrow int64->int32 saturate + nil preserved', () => {
         const O64 = new V.TypeOptional(T.INT64); const O32 = new V.TypeOptional(T.INT32);
         const [rw, s] = mk(O64, O32, 'saturate');
-        const out = rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O64, V.Value.create(T.INT64, 2n ** 40n)) }));
-        assert.equal(out.at('f', false).unwrap(true), 2147483647);            // saturated to int32 max
-        const nout = rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O64) }));
-        assert.ok(nout.at('f', false).isNil());                               // nil stays nil
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O64, V.Value.create(T.INT64, 2n ** 40n)) })));
+        assert.equal(/** @type {D.ValueOptional} */ (out.at('f', false)).unwrap(true), 2147483647);            // saturated to int32 max
+        const nout = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: new V.ValueOptional(O64) })));
+        assert.ok(/** @type {D.ValueOptional} */ (nout.at('f', false)).isNil());                               // nil stays nil
     });
 
     it('optional narrow without policy is refused', () => {
@@ -50,17 +68,17 @@ describe('Optional / Tuple element retype', () => {
 
     it('tuple per-position widen and narrow', () => {
         const [rw, s] = mk(new V.TypeTuple([T.INT32, T.STRING]), new V.TypeTuple([T.INT64, T.STRING]));  // widen A
-        const out = rw.value(new V.ValueStructure(s, {
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, {
             f: new V.ValueTuple(new V.TypeTuple([T.INT32, T.STRING]), [V.Value.create(T.INT32, 5), new V.ValueString('a')]),
-        }));
-        assert.equal(out.at('f', false).at(0, true), 5n);
-        assert.equal(out.at('f', false).at(1, true), 'a');
+        })));
+        assert.equal(/** @type {D.ValueTuple} */ (out.at('f', false)).at(0, true), 5n);
+        assert.equal(/** @type {D.ValueTuple} */ (out.at('f', false)).at(1, true), 'a');
         const [rw2, s2] = mk(new V.TypeTuple([T.INT64, T.STRING]), new V.TypeTuple([T.INT32, T.STRING]), 'saturate');  // narrow B
-        const out2 = rw2.value(new V.ValueStructure(s2, {
+        const out2 = /** @type {D.ValueStructure} */ (rw2.value(new V.ValueStructure(s2, {
             f: new V.ValueTuple(new V.TypeTuple([T.INT64, T.STRING]), [V.Value.create(T.INT64, 2n ** 40n), new V.ValueString('b')]),
-        }));
-        assert.equal(out2.at('f', false).at(0, true), 2147483647);
-        assert.equal(out2.at('f', false).at(1, true), 'b');
+        })));
+        assert.equal(/** @type {D.ValueTuple} */ (out2.at('f', false)).at(0, true), 2147483647);
+        assert.equal(/** @type {D.ValueTuple} */ (out2.at('f', false)).at(1, true), 'b');
     });
 
     it('tuple arity change is refused at value time', () => {
@@ -78,7 +96,7 @@ describe('Optional / Tuple element retype', () => {
         const vv = new V.ValueVector(new V.TypeVector(O64));
         vv.append(new V.ValueOptional(O64, V.Value.create(T.INT64, 2n ** 40n)));
         vv.append(new V.ValueOptional(O64));                                  // a nil element
-        const out = rw.value(new V.ValueStructure(s, { f: vv }));
+        const out = /** @type {D.ValueStructure} */ (rw.value(new V.ValueStructure(s, { f: vv })));
         const r = V.ValueVector.cast(out.at('f', false));
         assert.equal(V.ValueOptional.cast(r.at(0, false)).unwrap(true), 2147483647);
         assert.ok(V.ValueOptional.cast(r.at(1, false)).isNil());
@@ -86,6 +104,7 @@ describe('Optional / Tuple element retype', () => {
 });
 
 describe('Composite retype guard (fail-closed)', () => {
+    /** @param {(src: D.Definitions) => [D.TypeStructure, D.Type, () => D.Value]} mkFn */
     function apply(mkFn) {
         const src = new V.Definitions();
         const [holder, tgtType, makeVal] = mkFn(src);

@@ -20,6 +20,8 @@ import path from 'node:path';
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { definitionsMigrate } from '../src/definitions_migrate.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @typedef {(sourceDefs: D.DefinitionsConst) => TransformationDirectives} BuildDirectives */
 
 // True iff the installed binding exposes the parser source-map surface.
 function sourceMapAvailable() {
@@ -30,7 +32,7 @@ const SM = sourceMapAvailable();
 
 // A stand-in for a transformation module: any object exposing
 // buildDirectives(sourceDefs) -> TransformationDirectives.
-const transformation = (fn) => ({ buildDirectives: fn });
+const transformation = (/** @type {BuildDirectives} */ fn) => ({ buildDirectives: fn });
 
 const SHOP = `namespace Shop {11111111-1111-1111-1111-111111111111} {
 
@@ -71,6 +73,10 @@ function_pool Tools {8d5b40a5-f9a3-4d0e-83dd-90dd282d3cbe} {
 };
 `;
 
+/**
+ * @param {D.DefinitionsConst} sourceDefs
+ * @param {string} name
+ */
 function namespaceOf(sourceDefs, name) {
     for (const defn of [...sourceDefs.concepts(), ...sourceDefs.structures(), ...sourceDefs.enumerations()]) {
         const ns = defn.typeName().nameSpace();
@@ -81,11 +87,16 @@ function namespaceOf(sourceDefs, name) {
 
 // Build a two-file `.dsm` tree, run the codemod with verify:true (the digest oracle is the
 // pass/fail), and return the patched text.
+/**
+ * @param {Record<string, string>} files
+ * @param {BuildDirectives} fn
+ */
 function run(files, fn) {
     const src = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-src-'));
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-out-'));
     for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(src, name), text, 'utf-8');
     definitionsMigrate(src, transformation(fn), out, { verify: true });   // raises on mismatch
+    /** @type {Record<string, string>} */
     const patched = {};
     for (const name of Object.keys(files)) patched[name] = fs.readFileSync(path.join(out, name), 'utf-8');
     return patched;
@@ -505,8 +516,8 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
             + '};\n\n'
             + '};\n';
         const out = run({ 'model.dsm': model }, (defs) => {
-            const a = defs.structures().find((s) => s.representation() === 'N::A');
-            const b = defs.structures().find((s) => s.representation() === 'N::B');
+            const a = /** @type {D.TypeStructure} */ (defs.structures().find((s) => s.representation() === 'N::A'));
+            const b = /** @type {D.TypeStructure} */ (defs.structures().find((s) => s.representation() === 'N::B'));
             const d = new TransformationDirectives();
             d.transformType(V.Type.UINT16, V.Type.UINT32, (v) => v);          // primitive, everywhere
             d.transformType(new V.TypeVector(V.Type.INT32), new V.TypeSet(V.Type.INT32), (v) => v);  // composite
@@ -537,7 +548,7 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
             const d = new TransformationDirectives();
             d.dropType('N::Money');
             return d;
-        }), (err) => {
+        }), (/** @type {Error} */ err) => {
             assert.ok(err.message.includes('[dropped-type-in-pool]'));
             assert.ok(err.message.includes("Tools::total — return type"));
             assert.ok(err.message.includes("Tools::total — parameter 'xs'"));   // nested in a vector
@@ -560,13 +571,14 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         fs.writeFileSync(path.join(src, 'model.dsm'), model, 'utf-8');
         fs.writeFileSync(path.join(src, 'pools.dsm'), pools, 'utf-8');
 
+        /** @type {string[]} */
         const notices = [];
         definitionsMigrate(src, transformation((defs) => {
-            const money = defs.structures().find((s) => s.representation() === 'N::Money');
+            const money = /** @type {D.TypeStructure} */ (defs.structures().find((s) => s.representation() === 'N::Money'));
             const d = new TransformationDirectives();
             d.transformType(money, V.Type.UINT64, () => new V.ValueUInt64(0));
             return d;
-        }), out, { verify: true, onNotice: (line) => notices.push(line) });
+        }), out, { verify: true, onNotice: (/** @type {string} */ line) => notices.push(line) });
 
         assert.deepEqual(notices, ['[pool-signature-rewritten] Tools::total — return type : '
             + 'N::Money -> uint64']);

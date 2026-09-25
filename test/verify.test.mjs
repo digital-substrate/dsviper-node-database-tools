@@ -10,16 +10,30 @@ import V from '../src/dsviper.mjs';
 import { TransformationDirectives, DefinitionsRewriter, VerificationError } from '../src/index.mjs';
 import * as migrateDatabase from '../src/migrate_database.mjs';
 import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/**
+ * What the hooks below read from the context the engine hands a 4-parameter hook.
+ * @typedef {{ attachmentGetting: D.AttachmentGetting, selfKey: D.ValueKey }} HookCtx
+ */
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {Array<[string, D.Type]>} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
 
+/**
+ * @param {() => unknown} fn
+ * @param {string} needle
+ */
 function assertRaisesVerification(fn, needle) {
     try {
         fn();
@@ -54,6 +68,10 @@ function sourceWithBlob() {
     return { src, docT };
 }
 
+/**
+ * @param {D.Database} src
+ * @param {TransformationDirectives} directives
+ */
 function migrateDb(src, directives) {
     const [rewriter, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
     const tgt = V.Database.createInMemory();
@@ -62,6 +80,7 @@ function migrateDb(src, directives) {
     return { rewriter, tgt };
 }
 
+/** @param {D.TypeStructure} docT */
 function renameAndDrop(docT) {
     const d = new TransformationDirectives();
     d.renameField(docT.representation(), 'name', 'title');
@@ -106,7 +125,7 @@ describe('Database verify', () => {
         const { rewriter, tgt } = migrateDb(src, renameAndDrop(docT));
         // tamper with the target document after a faithful migration
         const tgtAtt = tgt.definitions().attachments()[0];
-        const tk = tgt.keys(tgtAtt).at(0, false);
+        const tk = /** @type {D.ValueKey} */ (tgt.keys(tgtAtt).at(0, false));
         const tdoc = V.ValueStructure.cast(tgt.get(tgtAtt, tk).unwrap(false));
         const tampered = new V.ValueStructure(tdoc.typeStructure(),
             { title: 'DRIFTED', thumb: tdoc.at('thumb', false) });
@@ -119,8 +138,8 @@ describe('Database verify', () => {
         const { rewriter, tgt } = migrateDb(src, renameAndDrop(docT));
         // delete the referenced blob out from under the document
         const tgtAtt = tgt.definitions().attachments()[0];
-        const thumb = V.ValueStructure.cast(
-            tgt.get(tgtAtt, tgt.keys(tgtAtt).at(0, false)).unwrap(false)).at('thumb', false);
+        const thumb = /** @type {D.ValueBlobId} */ (V.ValueStructure.cast(
+            tgt.get(tgtAtt, /** @type {D.ValueKey} */ (tgt.keys(tgtAtt).at(0, false))).unwrap(false)).at('thumb', false));
         tgt.beginTransaction(); tgt.delBlob(thumb); tgt.commit();
         assertRaisesVerification(() => migrateDatabase.verify(src, rewriter, tgt), 'blob');
     });
@@ -131,7 +150,7 @@ describe('Database verify', () => {
         const tgtAtt = tgt.definitions().attachments()[0];
         const extra = tgtAtt.createKey(new V.ValueUUId('66666666-6666-6666-6666-666666666666'));
         const existing = V.ValueStructure.cast(
-            tgt.get(tgtAtt, tgt.keys(tgtAtt).at(0, false)).unwrap(false));
+            tgt.get(tgtAtt, /** @type {D.ValueKey} */ (tgt.keys(tgtAtt).at(0, false))).unwrap(false));
         tgt.beginTransaction(); tgt.set(tgtAtt, extra, existing); tgt.commit();
         assertRaisesVerification(() => migrateDatabase.verify(src, rewriter, tgt), 'documents');
     });
@@ -151,8 +170,9 @@ describe('Database verify mirrors migrate', () => {
         const orderDoc = struct(defs, 'OrderDoc', [['custRef', custs.typeKey()], ['amount', T.INT32]]);
         const orders = defs.createAttachment(NS, 'Orders', order, orderDoc);
         src.extendDefinitions(defs.const());
+        /** @type {Record<string, D.Attachment>} */
         const atts = {};
-        for (const a of src.definitions().attachments()) atts[a.identifier().split('.').pop()] = a;
+        for (const a of src.definitions().attachments()) atts[/** @type {string} */ (a.identifier().split('.').pop())] = a;
         const ck = atts.Customers.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
         const ok = atts.Orders.createKey(new V.ValueUUId('22222222-2222-2222-2222-222222222222'));
         src.beginTransaction();
@@ -165,9 +185,15 @@ describe('Database verify mirrors migrate', () => {
     it('verify passes with a non-local hook', () => {
         const { src, custs, orderDoc } = orderShop();
 
+        /**
+         * @param {D.ValueStructure} sourceStruct
+         * @param {string} fieldName
+         * @param {D.Type} targetType
+         * @param {HookCtx} ctx
+         */
         function deriveName(sourceStruct, fieldName, targetType, ctx) {
-            const c = ctx.attachmentGetting.get(custs, sourceStruct.at('custRef', false));
-            return new V.ValueString(V.ValueStructure.cast(c.unwrap(false)).at('name', false));
+            const c = ctx.attachmentGetting.get(custs, /** @type {D.ValueKey} */ (sourceStruct.at('custRef', false)));
+            return new V.ValueString(/** @type {D.ValueString} */ (V.ValueStructure.cast(c.unwrap(false)).at('name', false)));
         }
 
         const d = new TransformationDirectives();
@@ -179,8 +205,15 @@ describe('Database verify mirrors migrate', () => {
 
     it('verify passes with an aggregate hook (self key wired)', () => {
         const { src, custDoc } = orderShop();
+        /** @type {string[]} */
         const seen = [];
 
+        /**
+         * @param {D.ValueStructure} sourceStruct
+         * @param {string} fieldName
+         * @param {D.Type} targetType
+         * @param {HookCtx} ctx
+         */
         function needsSelfKey(sourceStruct, fieldName, targetType, ctx) {
             seen.push(ctx.selfKey.instanceId().representation());   // reads selfKey
             return new V.ValueInt32(0);
@@ -221,12 +254,17 @@ function orderDb() {
     return { src, order };
 }
 
+/** @param {D.TypeStructure} order */
 function renameQty(order) {
     const d = new TransformationDirectives();
     d.renameField(order.representation(), 'qty', 'count');
     return d;
 }
 
+/**
+ * @param {D.CommitDatabase} src
+ * @param {TransformationDirectives} directives
+ */
 function migrateCommit(src, directives) {
     const [rewriter, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
     const tgt = V.CommitDatabase.createInMemory();
@@ -275,7 +313,7 @@ describe('CommitDatabase verify', () => {
         src.mergeCommit('merge A,B', cA, cB);                  // merges the two divergent heads
         const { rewriter, tgt, info } = migrateCommit(src, renameQty(order));
         const result = migrateCommitDatabase.verify(src, rewriter, tgt, info.remap);
-        assert.equal(result.commits, src.commitIds().length);
+        assert.equal(result.commits, [...src.commitIds()].length);
         assert.equal(result.commits, 4);                      // base, A, B, merge
     });
 
@@ -289,7 +327,7 @@ describe('CommitDatabase verify', () => {
         const att = src.definitions().attachments()[0];
         const k1 = att.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
         const k2 = att.createKey(new V.ValueUUId('22222222-2222-2222-2222-222222222222'));
-        const external = V.ValueCommitId.tryParse('a'.repeat(40));
+        const external = /** @type {D.ValueCommitId} */ (V.ValueCommitId.tryParse('a'.repeat(40)));
         const cms0 = new V.CommitMutableState(V.CommitStateBuilder.initialState(src));
         cms0.attachmentMutating().set(att, k1, new V.ValueStructure(ref, { note: 'a', prev: external }));
         const c1 = src.commitMutations('c1', cms0);
@@ -403,7 +441,7 @@ describe('CommitDatabase verify is opcode-faithful', () => {
         const ck = custs.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
         const o1 = orders.createKey(new V.ValueUUId('22222222-2222-2222-2222-222222222222'));
         const o2 = orders.createKey(new V.ValueUUId('33333333-3333-3333-3333-333333333333'));
-        const odt = orders.documentType();
+        const odt = /** @type {D.TypeStructure} */ (orders.documentType());
         const cms0 = new V.CommitMutableState(V.CommitStateBuilder.initialState(src));
         const am = cms0.attachmentMutating();
         am.set(custs, ck, new V.ValueStructure(custDoc, { name: 'Ada' }));
@@ -413,13 +451,19 @@ describe('CommitDatabase verify is opcode-faithful', () => {
         cms1.attachmentMutating().set(orders, o2, new V.ValueStructure(odt, { custRef: ck, qty: 10 }));
         src.commitMutations('order2', cms1);
 
+        /**
+         * @param {D.ValueStructure} sourceStruct
+         * @param {string} fieldName
+         * @param {D.Type} targetType
+         * @param {HookCtx} ctx
+         */
         function orderCount(sourceStruct, fieldName, targetType, ctx) {
             let n = 0;
             const keys = ctx.attachmentGetting.keys(orders);
             for (let i = 0; i < keys.size(); i++) {
-                const od = ctx.attachmentGetting.get(orders, keys.at(i, false));
+                const od = ctx.attachmentGetting.get(orders, /** @type {D.ValueKey} */ (keys.at(i, false)));
                 if (od.isNil()) continue;
-                const refv = V.ValueStructure.cast(od.unwrap(false)).at('custRef', false);
+                const refv = /** @type {D.ValueKey} */ (V.ValueStructure.cast(od.unwrap(false)).at('custRef', false));
                 if (refv.representation() === ctx.selfKey.representation()) n += 1;
             }
             return new V.ValueInt32(n);
@@ -438,7 +482,7 @@ describe('CommitDatabase verify is opcode-faithful', () => {
         const { src, custDoc, orderDoc, custs, orders } = custOrderSchema();
         const ck = custs.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
         const ok = orders.createKey(new V.ValueUUId('22222222-2222-2222-2222-222222222222'));
-        const odt = orders.documentType();
+        const odt = /** @type {D.TypeStructure} */ (orders.documentType());
         const cms0 = new V.CommitMutableState(V.CommitStateBuilder.initialState(src));
         const am = cms0.attachmentMutating();
         am.set(custs, ck, new V.ValueStructure(custDoc, { name: 'Ada' }));
@@ -448,9 +492,15 @@ describe('CommitDatabase verify is opcode-faithful', () => {
         cms1.attachmentMutating().update(custs, ck, V.Path.fromField('name').const(), 'Ada2');
         src.commitMutations('rename cust', cms1);
 
+        /**
+         * @param {D.ValueStructure} sourceStruct
+         * @param {string} fieldName
+         * @param {D.Type} targetType
+         * @param {HookCtx} ctx
+         */
         function deriveName(sourceStruct, fieldName, targetType, ctx) {
-            const cust = ctx.attachmentGetting.get(custs, sourceStruct.at('custRef', false));
-            return new V.ValueString(V.ValueStructure.cast(cust.unwrap(false)).at('name', false));
+            const cust = ctx.attachmentGetting.get(custs, /** @type {D.ValueKey} */ (sourceStruct.at('custRef', false)));
+            return new V.ValueString(/** @type {D.ValueString} */ (V.ValueStructure.cast(cust.unwrap(false)).at('name', false)));
         }
 
         const d = new TransformationDirectives();

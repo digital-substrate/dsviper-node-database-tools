@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "strictNullChecks": true,
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ESNext",
+      "ESNext.Disposable"
+    ],
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true,
+    "noErrorTruncation": true
+  },
+  "include": [
+    "bin/**/*.mjs",
+    "src/**/*.mjs",
+    "test/**/*.mjs",
+    "examples/**/*.mjs"
+  ]
+}

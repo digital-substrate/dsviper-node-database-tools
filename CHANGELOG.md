@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Migration read commit ids as an array.** A binding returning them as `ValueSet` made the progress
+  bar and the commit-count check read `undefined`; they are spread first, which works with either.
+
+### Changed
+
+- **Typed against the binding's declarations.** `npm run typecheck` runs TypeScript over the
+  package's `.mjs` through JSDoc; no call into the binding is made on an untyped receiver.
+
 ## [0.2.4] - 2026-07-18
 
 Internal refactor, no behaviour change (parity with Python 0.2.4).

@@ -13,9 +13,14 @@ import V from '../src/dsviper.mjs';
 import { TransformationDirectives, DefinitionsRewriter } from '../src/rewrite/index.mjs';
 import * as migrateDatabase from '../src/migrate_database.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { FieldHook } from '../src/rewrite/directives.mjs' */
+/** @import { DatabaseProgress } from '../src/migrate_database.mjs' */
+
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/** @param {D.Definitions} defs @param {string} name @param {Array<[string, D.Type]>} fields */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
@@ -23,6 +28,7 @@ function struct(defs, name, fields) {
 }
 
 // migrate a source Database under `directives`, returning { tgtDb, transformer, info }.
+/** @param {D.Database} srcDb @param {TransformationDirectives} directives */
 function migrate(srcDb, directives) {
     const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(srcDb.definitions(), directives);
     const tgtDb = V.Database.createInMemory();
@@ -85,7 +91,7 @@ describe('migrateDatabase — on-disk run, self-verified', () => {
             src.commit();
             src.close();
 
-            const build = (d0) => {
+            const build = (/** @type {D.DefinitionsConst} */ d0) => {
                 const st = d0.structures()[0].representation();
                 const d = new TransformationDirectives();
                 d.renameField(st, 'name', 'title');
@@ -100,9 +106,10 @@ describe('migrateDatabase — on-disk run, self-verified', () => {
 
             const tgt = V.Database.open(tgtPath, true);
             const tatt = tgt.definitions().attachments()[0];
-            const doc = V.ValueStructure.cast(tgt.get(tatt, tgt.keys(tatt).at(0, false)).unwrap(false));
+            const doc = V.ValueStructure.cast(tgt.get(tatt, /** @type {D.ValueKey} */ (tgt.keys(tatt).at(0, false))).unwrap(false));
             assert.equal(doc.at('title'), 'hi');
-            assert.deepEqual([...Buffer.from(tgt.blob(doc.at('thumb', false)).encoded())], [7, 7, 7, 7]);
+            const thumb = /** @type {D.ValueBlobId} */ (doc.at('thumb', false));
+            assert.deepEqual([...Buffer.from(/** @type {D.ValueBlob} */ (tgt.blob(thumb)).encoded())], [7, 7, 7, 7]);
             assert.equal([...tgt.blobIds()].length, 1);
             tgt.close();
         } finally {
@@ -113,6 +120,7 @@ describe('migrateDatabase — on-disk run, self-verified', () => {
 
 
 describe('migrateDatabase — drop-record position (record scope)', () => {
+    /** @param {D.Definitions} defs */
     function makeEnum(defs) {
         const ed = new V.TypeEnumerationDescriptor('Mode');
         ed.addCase('Old'); ed.addCase('New');
@@ -132,7 +140,7 @@ describe('migrateDatabase — drop-record position (record scope)', () => {
         d.removeCase(e.representation(), 'Old', 'drop-record');
         const [rewriter] = DefinitionsRewriter.fromDirectives(src.definitions(), d);
         assert.throws(() => migrateDatabase.migrate(src, rewriter, V.Database.createInMemory()),
-            (err) => /drop-record/.test(err.message) && /ambiguous/.test(err.message));
+            (err) => /drop-record/.test(/** @type {Error} */ (err).message) && /ambiguous/.test(/** @type {Error} */ (err).message));
     });
 
     it('refuses a retype drop-record when the struct is nested in a map (dryRun enforces scope too)', () => {
@@ -202,7 +210,7 @@ describe('migrateDatabase — document-drop acknowledgement', () => {
         d.retypeField(docT.representation(), 'x', T.INT32, 'drop-record');       // NO sign-off
         const [rewriter] = DefinitionsRewriter.fromDirectives(src.definitions(), d);
         assert.throws(() => migrateDatabase.migrate(src, rewriter, V.Database.createInMemory()),
-            (err) => /unacknowledged/.test(err.message) && /acceptDocumentDrops/.test(err.message));
+            (err) => /unacknowledged/.test(/** @type {Error} */ (err).message) && /acceptDocumentDrops/.test(/** @type {Error} */ (err).message));
     });
 
     it('dryRun does not require the acknowledgement', () => {
@@ -287,6 +295,7 @@ describe('migrateDatabase — dryRun preview', () => {
 
 
 describe('migrateDatabase — non-local Class-C hook (single reference)', () => {
+    /** @param {D.Definitions} defs */
     function schema(defs) {
         const customer = defs.createConcept(NS, 'Customer');
         const custDoc = struct(defs, 'CustomerDoc', [['name', T.STRING]]);
@@ -297,11 +306,13 @@ describe('migrateDatabase — non-local Class-C hook (single reference)', () => 
         return { custDoc, custsAtt, orderDoc, ordersAtt };
     }
 
+    /** @param {D.TypeStructure} orderDoc @param {D.Attachment} custsAtt */
     function directives(orderDoc, custsAtt) {
+        /** @type {FieldHook} */
         const deriveName = (sourceStruct, fieldName, targetType, ctx) => {
-            const key = sourceStruct.at('custRef', false);
+            const key = /** @type {D.ValueKey} */ (sourceStruct.at('custRef', false));
             const cust = ctx.attachmentGetting.get(custsAtt, key);              // ValueOptional
-            const name = V.ValueStructure.cast(cust.unwrap(false)).at('name');
+            const name = /** @type {string} */ (V.ValueStructure.cast(cust.unwrap(false)).at('name'));
             return new V.ValueString(name);
         };
         const d = new TransformationDirectives();
@@ -325,9 +336,9 @@ describe('migrateDatabase — non-local Class-C hook (single reference)', () => 
         const { tgtDb, info } = migrate(src, directives(orderDoc, custsAtt));
         assert.equal(info.documents, 2);
 
-        const tgtOrders = tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Orders'));
+        const tgtOrders = /** @type {D.Attachment} */ (tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Orders')));
         const doc = V.ValueStructure.cast(
-            tgtDb.get(tgtOrders, tgtDb.keys(tgtOrders).at(0, false)).unwrap(false));
+            tgtDb.get(tgtOrders, /** @type {D.ValueKey} */ (tgtDb.keys(tgtOrders).at(0, false))).unwrap(false));
         assert.equal(doc.at('customerName'), 'Ada');
         assert.equal(doc.at('qty'), 7);
     });
@@ -342,6 +353,7 @@ describe('migrateDatabase — non-local Class-C hook (single reference)', () => 
     });
 
     it('ctx reports the view and supports a re-entrant rewrite', () => {
+        /** @type {{ view?: boolean }} */
         const seen = {};
         const src = V.Database.createInMemory();
         const defs = new V.Definitions();
@@ -354,11 +366,12 @@ describe('migrateDatabase — non-local Class-C hook (single reference)', () => 
         src.set(ordersAtt, ok, new V.ValueStructure(orderDoc, { custRef: ck, qty: 7 }));
         src.commit();
 
+        /** @type {FieldHook} */
         const deriveName = (sourceStruct, fieldName, targetType, ctx) => {
             seen.view = ctx.hasSourceView;
-            const key = sourceStruct.at('custRef', false);
+            const key = /** @type {D.ValueKey} */ (sourceStruct.at('custRef', false));
             const cust = ctx.attachmentGetting.get(custsAtt, key);
-            const name = V.ValueStructure.cast(cust.unwrap(false)).at('name');
+            const name = /** @type {string} */ (V.ValueStructure.cast(cust.unwrap(false)).at('name'));
             // re-enter the engine on the leaf; followRefs=false blanks the view inside
             return ctx.rewrite(new V.ValueString(name), T.STRING, { followRefs: false });
         };
@@ -371,15 +384,16 @@ describe('migrateDatabase — non-local Class-C hook (single reference)', () => 
         migrateDatabase.migrate(src, rewriter, tgtDb);
 
         assert.equal(seen.view, true);
-        const tgtOrders = tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Orders'));
+        const tgtOrders = /** @type {D.Attachment} */ (tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Orders')));
         const doc = V.ValueStructure.cast(
-            tgtDb.get(tgtOrders, tgtDb.keys(tgtOrders).at(0, false)).unwrap(false));
+            tgtDb.get(tgtOrders, /** @type {D.ValueKey} */ (tgtDb.keys(tgtOrders).at(0, false))).unwrap(false));
         assert.equal(doc.at('customerName'), 'Ada');
     });
 });
 
 
 describe('migrateDatabase — aggregate Class-C hook (incoming reference fold)', () => {
+    /** @param {D.Definitions} defs */
     function schema(defs) {
         const customer = defs.createConcept(NS, 'Customer');
         const custDoc = struct(defs, 'CustomerDoc', [['name', T.STRING]]);
@@ -408,16 +422,19 @@ describe('migrateDatabase — aggregate Class-C hook (incoming reference fold)',
         });
         src.commit();
 
+        /** @type {Record<string, number>} */
         const index = {};
+        /** @type {number[]} */
         const scans = [];
+        /** @type {FieldHook} */
         const totalSpent = (sourceStruct, fieldName, targetType, ctx) => {
             if (Object.keys(index).length === 0) {
                 const ag = ctx.attachmentGetting;
                 const ks = ag.keys(ordersAtt);
                 for (let i = 0; i < ks.size(); i++) {
-                    const o = V.ValueStructure.cast(ag.get(ordersAtt, ks.at(i, false)).unwrap(false));
-                    const ref = String(V.Value.dumps(o.at('custRef', false)));
-                    index[ref] = (index[ref] || 0) + V.Value.dumps(o.at('amount', false));
+                    const o = V.ValueStructure.cast(ag.get(ordersAtt, /** @type {D.ValueKey} */ (ks.at(i, false))).unwrap(false));
+                    const ref = String(V.Value.dumps(/** @type {D.Value} */ (o.at('custRef', false))));
+                    index[ref] = (index[ref] || 0) + /** @type {number} */ (V.Value.dumps(/** @type {D.Value} */ (o.at('amount', false))));
                 }
                 scans.push(1);
             }
@@ -429,12 +446,13 @@ describe('migrateDatabase — aggregate Class-C hook (incoming reference fold)',
         const { tgtDb } = migrate(src, d);
 
         assert.equal(scans.length, 1);                                         // scanned once, memoised
-        const tgtCusts = tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Customers'));
+        const tgtCusts = /** @type {D.Attachment} */ (tgtDb.definitions().attachments().find((a) => a.representation().endsWith('Customers')));
+        /** @type {Record<string, unknown>} */
         const totals = {};
         const keys = tgtDb.keys(tgtCusts);
         for (let i = 0; i < keys.size(); i++) {
-            const doc = V.ValueStructure.cast(tgtDb.get(tgtCusts, keys.at(i, false)).unwrap(false));
-            totals[V.Value.dumps(doc.at('name', false))] = V.Value.dumps(doc.at('totalSpent', false));
+            const doc = V.ValueStructure.cast(tgtDb.get(tgtCusts, /** @type {D.ValueKey} */ (keys.at(i, false))).unwrap(false));
+            totals[/** @type {string} */ (V.Value.dumps(/** @type {D.Value} */ (doc.at('name', false))))] = V.Value.dumps(/** @type {D.Value} */ (doc.at('totalSpent', false)));
         }
         assert.deepEqual(totals, { Ada: 60, Bob: 99 });
     });
@@ -443,8 +461,10 @@ describe('migrateDatabase — aggregate Class-C hook (incoming reference fold)',
         const defs = new V.Definitions();
         const { custDoc } = schema(defs);
 
+        /** @type {FieldHook} */
         const needsSelf = (sourceStruct, fieldName, targetType, ctx) => {
             assert.equal(ctx.hasSelfKey, false);
+            // @ts-expect-error the ctx.selfKey read throws (no self key) before a ValueInt32 is built from it
             return new V.ValueInt32(ctx.selfKey);                              // throws: no self key
         };
 
@@ -466,8 +486,9 @@ describe('migrateDatabase — dropAttachment', () => {
         defs.createAttachment(NS, 'Orders', cust, keep);
         defs.createAttachment(NS, 'Audits', cust, legacy);
         src.extendDefinitions(defs.const());
+        /** @type {Record<string, D.Attachment>} */
         const atts = {};
-        for (const a of src.definitions().attachments()) atts[a.identifier().split('.').pop()] = a;
+        for (const a of src.definitions().attachments()) atts[/** @type {string} */ (a.identifier().split('.').pop())] = a;
         src.beginTransaction();
         src.set(atts.Orders, atts.Orders.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111')),
             new V.ValueStructure(keep, { qty: 5 }));
@@ -532,6 +553,7 @@ describe('migrateDatabase — progress reporting', () => {
         });
         src.commit();
 
+        /** @type {DatabaseProgress[]} */
         const events = [];
         const d = new TransformationDirectives();
         d.renameField(docT.representation(), 'name', 'title');
@@ -588,7 +610,9 @@ describe('migrateDatabase — source snapshot lifecycle', () => {
 
     it('holds the source snapshot during the pass and releases it after', () => {
         const src = seed();
+        /** @type {{ during?: boolean }} */
         const seen = {};
+        /** @type {FieldHook} */
         const probe = (sourceStruct, fieldName, targetType, ctx) => {
             seen.during = src.inTransaction();                                 // snapshot held while the pass reads
             return new V.ValueInt32(0);
@@ -605,6 +629,7 @@ describe('migrateDatabase — source snapshot lifecycle', () => {
 
     it('releases the snapshot even on failure', () => {
         const src = seed();
+        /** @type {FieldHook} */
         const boom = (sourceStruct, fieldName, targetType, ctx) => { throw new Error('boom'); };
         const d = new TransformationDirectives();
         d.addField('Demo::Doc', 'tag', T.INT32, boom);
@@ -622,6 +647,7 @@ describe('migrateDatabase — failure safety (all-or-nothing)', () => {
         '22222222-2222-2222-2222-222222222222',
         '33333333-3333-3333-3333-333333333333'];
 
+    /** @param {D.Database} db */
     function seed(db) {
         const defs = new V.Definitions();
         const c = defs.createConcept(NS, 'C');
@@ -636,6 +662,7 @@ describe('migrateDatabase — failure safety (all-or-nothing)', () => {
 
     function boomDirectives() {
         let calls = 0;
+        /** @type {FieldHook} */
         const boom = (sourceStruct, fieldName, targetType, ctx) => {
             calls += 1;
             if (calls === 3) throw new Error('boom mid-migration');

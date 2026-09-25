@@ -5,12 +5,21 @@
 // `source` is a Database/CommitDatabase (both expose blobInfo + readBlob); `targetDatabasing`
 // is target.databasing() / target.commitDatabasing() (createZeroBlob / writeBlob / freezeBlob).
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+
 const CHUNK = 64 * 1024 * 1024;        // stream large blobs, never materialised whole
 
 // Stream one blob's bytes source -> target, preserving its id. Returns true if copied, false if
 // the source lacks it (an incoherent reference — skipped). `onBytes`, if given, is called with
 // each chunk's byte count as it is written — so a caller can show byte-level progress even
 // through a single multi-gigabyte blob.
+/**
+ * @param {D.Database | D.CommitDatabase} source the store the blob is read from
+ * @param {D.Databasing | D.CommitDatabasing} targetDatabasing the target's databasing driver
+ * @param {D.ValueBlobId} blobId the blob to copy (its id is preserved)
+ * @param {((bytes: number) => void) | null} [onBytes] called with each chunk's byte count
+ * @returns {boolean} true if copied, false if the source lacks the blob
+ */
 export function copyBlob(source, targetDatabasing, blobId, onBytes = null) {
     const info = source.blobInfo(blobId);
     if (info === null || info === undefined) return false;

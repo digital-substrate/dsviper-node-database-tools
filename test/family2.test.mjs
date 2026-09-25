@@ -6,15 +6,28 @@ import assert from 'node:assert/strict';
 import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { DefinitionsRewriter, Unrepresentable } from '../src/rewrite/index.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @typedef {Parameters<TransformationDirectives['retypeField']>[3]} RetypePolicy */
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {Array<[string, D.Type]>} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
+/**
+ * @param {DefinitionsRewriter} tr
+ * @param {D.Definitions} target
+ * @param {D.Value} value
+ * @param {D.Type} sourceType
+ */
 const rt = (tr, target, value, sourceType) =>
     V.Value.decode(V.Value.encode(value), tr.mapType(sourceType), target.const());
 
@@ -29,6 +42,10 @@ describe('family 2 — numeric leaf algebra', () => {
         assert.equal(back.at('n'), 2147483647n);                   // int64 native = bigint
     });
 
+    /**
+     * @param {RetypePolicy} policy
+     * @returns {[DefinitionsRewriter, D.TypeStructure]}
+     */
     const narrow = (policy) => {
         const src = new V.Definitions();
         const s = struct(src, 'W', [['n', T.INT64]]);
@@ -39,7 +56,7 @@ describe('family 2 — numeric leaf algebra', () => {
     };
     it('narrowing fail in range -> exact', () => {
         const [tr, s] = narrow('fail');
-        assert.equal(tr.value(new V.ValueStructure(s, { n: 100n })).at('n'), 100);
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { n: 100n }))).at('n'), 100);
     });
     it('narrowing fail out of range -> throws', () => {
         const [tr, s] = narrow('fail');
@@ -47,11 +64,11 @@ describe('family 2 — numeric leaf algebra', () => {
     });
     it('narrowing saturate', () => {
         const [tr, s] = narrow('saturate');
-        assert.equal(tr.value(new V.ValueStructure(s, { n: 2n ** 40n })).at('n'), 2 ** 31 - 1);
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { n: 2n ** 40n }))).at('n'), 2 ** 31 - 1);
     });
     it('narrowing default', () => {
         const [tr, s] = narrow(['default', new V.ValueInt32(-1)]);
-        assert.equal(tr.value(new V.ValueStructure(s, { n: 2n ** 40n })).at('n'), -1);
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { n: 2n ** 40n }))).at('n'), -1);
     });
     it('format X -> string and parse string -> X', () => {
         const src = new V.Definitions();
@@ -59,15 +76,15 @@ describe('family 2 — numeric leaf algebra', () => {
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'n', T.STRING);           // X->string: Class A
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        assert.equal(tr.value(new V.ValueStructure(s, { n: 42 })).at('n'), '42');
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { n: 42 }))).at('n'), '42');
 
         const src2 = new V.Definitions();
         const s2 = struct(src2, 'R', [['n', T.STRING]]);
         const d2 = new TransformationDirectives();
         d2.retypeField(s2.representation(), 'n', T.INT32, ['default', new V.ValueInt32(-1)]);
         const [tr2] = DefinitionsRewriter.fromDirectives(src2, d2);
-        assert.equal(tr2.value(new V.ValueStructure(s2, { n: '7' })).at('n'), 7);
-        assert.equal(tr2.value(new V.ValueStructure(s2, { n: 'abc' })).at('n'), -1);
+        assert.equal(/** @type {D.ValueStructure} */ (tr2.value(new V.ValueStructure(s2, { n: '7' }))).at('n'), 7);
+        assert.equal(/** @type {D.ValueStructure} */ (tr2.value(new V.ValueStructure(s2, { n: 'abc' }))).at('n'), -1);
     });
 });
 
@@ -92,8 +109,8 @@ describe('family 2 — structural', () => {
         const d = new TransformationDirectives();
         d.retypeField(s.representation(), 'x', T.INT32, ['default', new V.ValueInt32(0)]);
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
-        assert.equal(tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot, 9) })).at('x'), 9);
-        assert.equal(tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot) })).at('x'), 0);
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot, 9) }))).at('x'), 9);
+        assert.equal(/** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { x: new V.ValueOptional(ot) }))).at('x'), 0);
 
         const d2 = new TransformationDirectives();
         d2.retypeField(s.representation(), 'x', T.INT32, 'drop-record');
@@ -109,7 +126,7 @@ describe('family 2 — structural', () => {
         const [tr] = DefinitionsRewriter.fromDirectives(src, d);
         const vec = new V.ValueVector(new V.TypeVector(T.INT32));
         for (const x of [1, 2, 2, 3, 3, 3]) vec.append(x);
-        const out = tr.value(new V.ValueStructure(s, { tags: vec }));
+        const out = /** @type {D.ValueStructure} */ (tr.value(new V.ValueStructure(s, { tags: vec })));
         assert.equal(V.ValueSet.cast(out.at('tags', false)).size(), 3);
     });
 });

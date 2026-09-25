@@ -9,14 +9,45 @@
 import V from '../dsviper.mjs';
 import { WIDENING, INT_RANGE, constDefs, vecmatRetypeClass, containerElementRetypeClass } from './engine.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { TransformationDirectives, RetypePolicy, RemoveCasePolicy, ShrinkPolicy } from './directives.mjs' */
+
+/**
+ * A change's class: A lossless, B policied, C custom hook, or refused.
+ * @typedef {'A' | 'B' | 'C' | 'refused'} ChangeClass
+ */
+/**
+ * One classified change of a migration plan.
+ * @typedef {object} PlanChange
+ * @property {string} kind the directive family (`rename_type`, `retype_field`, ...)
+ * @property {string} site the qualified site (`Shop::Order.qty`, `Shop::Mode::Old`, ...)
+ * @property {string} detail a human description
+ * @property {ChangeClass} class
+ * @property {boolean} loss whether data changes or disappears
+ * @property {RetypePolicy | RemoveCasePolicy | ShrinkPolicy} policy the decreed policy, if any
+ */
+/**
+ * What `plan()` returns: plain data.
+ * @typedef {object} PlanReport
+ * @property {PlanChange[]} changes
+ * @property {string[]} warnings
+ * @property {{ changes: number, class_a: number, class_b: number, class_c: number, refused: number, lossy: number, warnings: number }} summary
+ */
+
 const FLOATS = new Set(['float', 'double']);
 const INTS = new Set(Object.keys(INT_RANGE));
 
+/** @param {RetypePolicy | RemoveCasePolicy | ShrinkPolicy} p */
 const fmtPolicy = (p) => Array.isArray(p)
-    ? `[${p.map((x) => (x !== null && typeof x === 'object' && typeof x.representation === 'function' ? x.representation() : x)).join(', ')}]`
+    ? `[${p.map((/** @type {string | number | bigint | D.Value} */ x) => (x !== null && typeof x === 'object' && typeof x.representation === 'function' ? x.representation() : x)).join(', ')}]`
     : String(p);
 
 // (class, human risk label) for a field retype, from the source and target leaf types.
+/**
+ * @param {D.Type} srcType
+ * @param {D.Type} newType
+ * @returns {[ChangeClass, string]}
+ */
 function classifyRetype(srcType, newType) {
     const vm = vecmatRetypeClass(srcType, newType);    // Vec/Mat element widen (A) / narrow (B) / refused
     if (vm !== null) return vm;
@@ -49,12 +80,28 @@ function classifyRetype(srcType, newType) {
 
 // Classify every change `directives` would make to `sourceDefs`, from the schema alone. Returns
 // { changes, warnings, summary } — plain data. No documents are read and no target is built.
+/**
+ * @param {D.Definitions | D.DefinitionsConst} sourceDefs the source schema
+ * @param {TransformationDirectives} directives the edit script
+ * @returns {PlanReport}
+ */
 export function plan(sourceDefs, directives) {
     const defs = constDefs(sourceDefs);
     const d = directives;
     const structs = Object.fromEntries(defs.structures().map((s) => [s.representation(), s]));
-    const changes = []; const warnings = [];
+    /** @type {PlanChange[]} */
+    const changes = [];
+    /** @type {string[]} */
+    const warnings = [];
 
+    /**
+     * @param {string} kind
+     * @param {string} site
+     * @param {string} detail
+     * @param {ChangeClass} [cls]
+     * @param {boolean} [loss]
+     * @param {RetypePolicy | RemoveCasePolicy | ShrinkPolicy} [policy]
+     */
     const add = (kind, site, detail, cls = 'A', loss = false, policy = null) =>
         changes.push({ kind, site, detail, class: cls, loss, policy });
 
@@ -77,7 +124,7 @@ export function plan(sourceDefs, directives) {
     for (const [srep, retypes] of Object.entries(d.retypedFields)) {
         const st = structs[srep];
         for (const [fname, [newType, policy]] of Object.entries(retypes)) {
-            const [cls, risk] = st !== undefined ? classifyRetype(st.check(fname).type(), newType) : ['B', 'retype (source struct not found)'];
+            const [cls, risk] = st !== undefined ? classifyRetype(st.check(fname).type(), newType) : /** @type {[ChangeClass, string]} */ (['B', 'retype (source struct not found)']);
             add('retype_field', `${srep}.${fname}`, risk, cls, cls === 'B', policy);
             if (cls === 'B' && policy === null) warnings.push(`missing policy — ${srep}.${fname}: ${risk} (Class B must decree a policy)`);
             if (cls === 'refused') warnings.push(`refused — ${srep}.${fname}: ${risk}`);
@@ -166,6 +213,10 @@ export function plan(sourceDefs, directives) {
 }
 
 // Render a `plan()` report as human-readable text (the operator's pre-flight view).
+/**
+ * @param {PlanReport} report a `plan()` report
+ * @returns {string}
+ */
 export function formatPlan(report) {
     const s = report.summary;
     const out = [`Migration plan — ${s.changes} changes: ${s.class_a} lossless (A), ${s.class_b} policied (B), ${s.class_c ?? 0} custom (C), ${s.refused} refused; ${s.lossy} lossy; ${s.warnings} warning(s).`];

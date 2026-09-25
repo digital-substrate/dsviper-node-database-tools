@@ -8,6 +8,7 @@
 ```bash
 npm install                # pulls in @digitalsubstrate/dsviper
 npm test                   # node --test over test/
+npm run typecheck          # TypeScript over src/, bin/, test/ against the binding's declarations
 ```
 
 ## Scope

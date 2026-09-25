@@ -13,9 +13,14 @@ import { TransformationDirectives, DefinitionsRewriter, Unrepresentable } from '
 import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
 import { VerificationError } from '../src/migrate_commit_database.mjs';
 
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @import { RewriteHookContext } from '../src/rewrite/engine.mjs' */
+/** @import { CommitProgress } from '../src/migrate_commit_database.mjs' */
+
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/** @param {D.Definitions} defs @param {string} name @param {Array<[string, D.Type]>} fields */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
@@ -24,20 +29,26 @@ function struct(defs, name, fields) {
 
 // Materialise a state as { `${att}|${inst}`: dumps(document) } — migrating each document through
 // `transformer` first when given (the RHS of the commutation law).
+/**
+ * @param {D.CommitDatabase} db
+ * @param {D.ValueCommitId} commitId
+ * @param {DefinitionsRewriter} [transformer]
+ */
 function snapshot(db, commitId, transformer) {
     const ag = V.CommitStateBuilder.state(db, commitId).attachmentGetting();
+    /** @type {Record<string, unknown>} */
     const snap = {};
     for (const att of db.definitions().attachments()) {
         const keys = ag.keys(att);
         for (let i = 0; i < keys.size(); i++) {
-            const key = keys.at(i, false);
+            const key = /** @type {D.ValueKey} */ (keys.at(i, false));
             const doc = ag.get(att, key);
             if (doc.isNil()) continue;
-            let val = doc.unwrap(false); let attLocal; let inst;
+            let val = /** @type {D.Value} */ (doc.unwrap(false)); let attLocal; let inst;
             if (transformer) {
                 try { val = transformer.value(val); } catch (e) { if (e instanceof Unrepresentable) continue; throw e; }
                 attLocal = transformer.attachment(att).identifier().split('.').pop();
-                inst = transformer.value(key).instanceId().representation();
+                inst = /** @type {D.ValueKey} */ (transformer.value(key)).instanceId().representation();
             } else {
                 attLocal = att.identifier().split('.').pop();
                 inst = key.instanceId().representation();
@@ -48,6 +59,7 @@ function snapshot(db, commitId, transformer) {
     return snap;
 }
 
+/** @param {D.TypeStructure} order */
 function renameQty(order) {
     const d = new TransformationDirectives();
     d.renameField(order.representation(), 'qty', 'count');
@@ -67,6 +79,7 @@ function orderDb(qtyType = T.INT32) {
     return { src, order };
 }
 
+/** @param {string} p */
 function orderDbOnDisk(p) {
     const src = V.CommitDatabase.create(p);
     const defs = new V.Definitions();
@@ -101,7 +114,7 @@ describe('CommitDatabase blobs carried', () => {
         const info = migrateCommitDatabase.migrate(src, rewriter, tgt);
         const present = new Set([...tgt.blobIds()].map((b) => b.representation()));
         assert.ok(present.has(blob.representation()));
-        assert.equal(Buffer.from(tgt.blob(blob).encoded()).toString(), 'receipt bytes');
+        assert.equal(Buffer.from(/** @type {D.ValueBlob} */ (tgt.blob(blob)).encoded()).toString(), 'receipt bytes');
         assert.deepEqual(snapshot(src, c1, rewriter), snapshot(tgt, info.remap[c1.representation()]));
     });
 });
@@ -223,6 +236,7 @@ describe('CommitDatabase drop-record refused', () => {
         cms0.attachmentMutating().set(att, k1, new V.ValueStructure(order, { qty: 5, label: 'a' }));
         src.commitMutations('set', cms0);
 
+        /** @param {D.ValueStructure} _sourceStruct @param {string} _fieldName @param {D.Type} _targetType @returns {D.Value} */
         function dropHook(_sourceStruct, _fieldName, _targetType) {
             throw new Unrepresentable('this value has no faithful image');
         }
@@ -234,7 +248,7 @@ describe('CommitDatabase drop-record refused', () => {
         tgt.extendDefinitions(targetDefs.const());
         assert.throws(() => migrateCommitDatabase.migrate(src, rewriter, tgt), /no faithful target image/);
         assert.equal(tgt.commitDatabasing().inTransaction(), false);  // rolled back
-        assert.equal(tgt.commitIds().length, 0);
+        assert.equal([...tgt.commitIds()].length, 0);
     });
 });
 
@@ -254,6 +268,7 @@ describe('CommitDatabase dryRun', () => {
         src.commitMutations('update', cms1);
         return { src, order };
     }
+    /** @param {D.CommitDatabase} src @param {TransformationDirectives} directives */
     function dry(src, directives) {
         const [rewriter] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
         return migrateCommitDatabase.dryRun(src, rewriter);
@@ -299,6 +314,7 @@ describe('CommitDatabase dryRun', () => {
 
     it('a hook drop is a dynamic would-abort site, found only by running', () => {
         const { src, order } = linear();
+        /** @param {D.ValueStructure} _sourceStruct @param {string} _fieldName @param {D.Type} _targetType @returns {D.Value} */
         function dropHook(_sourceStruct, _fieldName, _targetType) {
             throw new Unrepresentable('no image');
         }
@@ -345,8 +361,8 @@ describe('CommitDatabase Enable/Disable replay', () => {
         const cmsA = new V.CommitMutableState(V.CommitStateBuilder.state(src, c0));
         cmsA.attachmentMutating().update(att, k1, V.Path.fromField('qty').const(), 7);
         const cA = src.commitMutations('A', cmsA);
-        src.disableCommit('disable A', src.lastCommitId(), cA);      // revert cA's effect
-        src.enableCommit('enable A', src.lastCommitId(), cA);        // restore it
+        src.disableCommit('disable A', /** @type {D.ValueCommitId} */ (src.lastCommitId()), cA);      // revert cA's effect
+        src.enableCommit('enable A', /** @type {D.ValueCommitId} */ (src.lastCommitId()), cA);        // restore it
 
         const [rewriter, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), renameQty(order));
         const tgt = V.CommitDatabase.createInMemory();
@@ -354,7 +370,7 @@ describe('CommitDatabase Enable/Disable replay', () => {
         const info = migrateCommitDatabase.migrate(src, rewriter, tgt);
         for (const c of [c0, cA])
             assert.deepEqual(snapshot(src, c, rewriter), snapshot(tgt, info.remap[c.representation()]));
-        assert.equal(tgt.commitIds().length, 4);                     // base, A, disable, enable
+        assert.equal([...tgt.commitIds()].length, 4);                     // base, A, disable, enable
         const result = migrateCommitDatabase.verify(src, rewriter, tgt, info.remap);
         assert.equal(result.commits, 4);
     });
@@ -384,6 +400,7 @@ describe('CommitDatabase progress', () => {
         const [rewriter, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), renameQty(order));
         const tgt = V.CommitDatabase.createInMemory();
         tgt.extendDefinitions(targetDefs.const());
+        /** @type {CommitProgress[]} */
         const events = [];
         migrateCommitDatabase.migrate(src, rewriter, tgt, (p) => events.push(p));
 
@@ -423,10 +440,16 @@ describe('CommitDatabase non-local hook in replay', () => {
         cms1.attachmentMutating().set(ordersAtt, ok, new V.ValueStructure(orderDoc, { custRef: ck, qty: 7 }));
         const c1 = src.commitMutations('add order', cms1);
 
+        /**
+         * @param {D.ValueStructure} sourceStruct
+         * @param {string} _fieldName
+         * @param {D.Type} _targetType
+         * @param {RewriteHookContext} ctx
+         */
         function deriveName(sourceStruct, _fieldName, _targetType, ctx) {
-            const key = sourceStruct.at('custRef', false);
+            const key = /** @type {D.ValueKey} */ (sourceStruct.at('custRef', false));
             const cust = ctx.attachmentGetting.get(custsAtt, key);
-            return new V.ValueString(V.ValueStructure.cast(cust.unwrap(false)).at('name', false));
+            return new V.ValueString(/** @type {D.ValueString} */ (V.ValueStructure.cast(cust.unwrap(false)).at('name', false)));
         }
 
         const d = new TransformationDirectives();
@@ -440,9 +463,9 @@ describe('CommitDatabase non-local hook in replay', () => {
         // the head order carries the dereferenced name
         const head = info.remap[c1.representation()];
         const ag = V.CommitStateBuilder.state(tgt, head).attachmentGetting();
-        const tgtOrders = tgt.definitions().attachments().find((a) => a.representation().endsWith('Orders'));
+        const tgtOrders = /** @type {D.Attachment} */ (tgt.definitions().attachments().find((a) => a.representation().endsWith('Orders')));
         const tkeys = ag.keys(tgtOrders);
-        const doc = V.ValueStructure.cast(ag.get(tgtOrders, tkeys.at(0, false)).unwrap(false));
+        const doc = V.ValueStructure.cast(ag.get(tgtOrders, /** @type {D.ValueKey} */ (tkeys.at(0, false))).unwrap(false));
         assert.equal(doc.at('customerName', true), 'Ada');
 
         // the whole-DAG commutation law holds with the hook (verify wires the view)
@@ -490,7 +513,7 @@ describe('CommitDatabase drop_attachment', () => {
         tgt.extendDefinitions(targetDefs.const());
         assert.throws(
             () => migrateCommitDatabase.migrate(src, rewriter, tgt),
-            (e) => /unacknowledged/.test(e.message.toLowerCase()));
+            (e) => /unacknowledged/.test(/** @type {Error} */ (e).message.toLowerCase()));
     });
 
     it('an acknowledged drop skips the partition and verifies', () => {
@@ -507,9 +530,9 @@ describe('CommitDatabase drop_attachment', () => {
         assert.ok(tatts.some((r) => r.endsWith('Orders')));
         assert.ok(!tatts.some((r) => r.endsWith('Notes')));          // partition gone
         // Orders survives with its update; the Notes opcodes (incl. the xarray insert pair) skipped
-        const head = V.CommitStateBuilder.state(tgt, tgt.lastCommitId());
-        const toa = head.definitions().attachments().find((a) => a.representation().endsWith('Orders'));
-        const k = head.attachmentGetting().keys(toa).at(0, false);
+        const head = V.CommitStateBuilder.state(tgt, /** @type {D.ValueCommitId} */ (tgt.lastCommitId()));
+        const toa = /** @type {D.Attachment} */ (head.definitions().attachments().find((a) => a.representation().endsWith('Orders')));
+        const k = /** @type {D.ValueKey} */ (head.attachmentGetting().keys(toa).at(0, false));
         const doc = V.ValueStructure.cast(head.attachmentGetting().get(toa, k).unwrap(false));
         assert.equal(doc.at('qty', true), 7);
         // verify aligns the opcode streams (dropped-attachment opcodes filtered on both sides)
@@ -522,8 +545,15 @@ describe('CommitDatabase drop_attachment', () => {
 // -- Failure safety: a DAG replay is all-or-nothing ------------------------------------------
 
 describe('CommitDatabase replay failure safety', () => {
+    /** @param {D.DefinitionsConst} _sourceDefs */
     function boomDirectives(_sourceDefs) {
         const calls = { n: 0 };
+        /**
+         * @param {D.ValueStructure} _sourceStruct
+         * @param {string} _fieldName
+         * @param {D.Type} _targetType
+         * @param {RewriteHookContext} _ctx
+         */
         function boom(_sourceStruct, _fieldName, _targetType, _ctx) {
             calls.n += 1;
             if (calls.n === 2) throw new Error('boom mid-replay');
@@ -534,13 +564,14 @@ describe('CommitDatabase replay failure safety', () => {
         return d;
     }
 
+    /** @param {D.CommitDatabase} src @param {D.TypeStructure} order */
     function seed(src, order) {
         const att = src.definitions().attachments()[0];
         const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
         uuids.forEach((u, i) => {
             const base = i === 0
                 ? V.CommitStateBuilder.initialState(src)
-                : V.CommitStateBuilder.state(src, src.lastCommitId());
+                : V.CommitStateBuilder.state(src, /** @type {D.ValueCommitId} */ (src.lastCommitId()));
             const cms = new V.CommitMutableState(base);
             cms.attachmentMutating().set(att, att.createKey(new V.ValueUUId(u)), new V.ValueStructure(order, { qty: i }));
             src.commitMutations(`c${i}`, cms);
@@ -556,7 +587,7 @@ describe('CommitDatabase replay failure safety', () => {
         assert.throws(() => migrateCommitDatabase.migrate(src, rw, tgt), /boom mid-replay/);
         // the exclusive transaction was aborted, not left dangling — the target is usable again
         assert.equal(tgt.commitDatabasing().inTransaction(), false);
-        assert.equal(tgt.commitIds().length, 0);                     // no half-issued commits survive
+        assert.equal([...tgt.commitIds()].length, 0);                     // no half-issued commits survive
     });
 
     it('run discards the partial target file on failure', () => {

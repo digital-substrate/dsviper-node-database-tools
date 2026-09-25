@@ -10,30 +10,43 @@ import V from '../src/dsviper.mjs';
 import { TransformationDirectives } from '../src/rewrite/index.mjs';
 import { DefinitionsRewriter, Unrepresentable } from '../src/rewrite/index.mjs';
 import * as migrateCommitDatabase from '../src/migrate_commit_database.mjs';
+/** @import * as D from '@digitalsubstrate/dsviper' */
+/** @typedef {Parameters<TransformationDirectives['retypeField']>[3]} RetypePolicy */
 
 const T = V.Type;
 const NS = new V.NameSpace(new V.ValueUUId('6ba7b810-9dad-11d1-80b4-00c04fd430c8'), 'Demo');
 
+/**
+ * @param {D.Definitions} defs
+ * @param {string} name
+ * @param {Array<[string, D.Type]>} fields
+ */
 function struct(defs, name, fields) {
     const d = new V.TypeStructureDescriptor(name);
     for (const [fn, ft] of fields) d.addField(fn, ft);
     return defs.createStructure(NS, d);
 }
 
+/**
+ * @param {D.CommitDatabase} db
+ * @param {D.ValueCommitId} commitId
+ * @param {DefinitionsRewriter} [transformer]
+ */
 function snapshot(db, commitId, transformer) {
     const ag = V.CommitStateBuilder.state(db, commitId).attachmentGetting();
+    /** @type {Record<string, D.NativeValue>} */
     const snap = {};
     for (const att of db.definitions().attachments()) {
         const keys = ag.keys(att);
         for (let i = 0; i < keys.size(); i++) {
-            const key = keys.at(i, false);
+            const key = /** @type {D.ValueKey} */ (keys.at(i, false));
             const doc = ag.get(att, key);
             if (doc.isNil()) continue;
-            let val = doc.unwrap(false); let attLocal; let inst;
+            let val = /** @type {D.Value} */ (doc.unwrap(false)); let attLocal; let inst;
             if (transformer) {
                 try { val = transformer.value(val); } catch (e) { if (e instanceof Unrepresentable) continue; throw e; }
                 attLocal = transformer.attachment(att).identifier().split('.').pop();
-                inst = transformer.value(key).instanceId().representation();
+                inst = /** @type {D.ValueKey} */ (transformer.value(key)).instanceId().representation();
             } else {
                 attLocal = att.identifier().split('.').pop();
                 inst = key.instanceId().representation();
@@ -44,11 +57,13 @@ function snapshot(db, commitId, transformer) {
     return snap;
 }
 
+/** @param {D.TypeStructure} order */
 function renameQty(order) {
     const d = new TransformationDirectives();
     d.renameField(order.representation(), 'qty', 'count');
     return d;
 }
+/** @param {D.Type} [qtyType] */
 function orderDb(qtyType = T.INT32) {
     const src = V.CommitDatabase.createInMemory();
     const defs = new V.Definitions();
@@ -61,12 +76,17 @@ function orderDb(qtyType = T.INT32) {
     src.extendDefinitions(defs.const());
     return { src, order };
 }
+/**
+ * @param {D.CommitDatabase} src
+ * @param {TransformationDirectives} directives
+ * @param {D.ValueCommitId[]} commits
+ */
 function prove(src, directives, commits) {
     const [transformer, targetDefs] = DefinitionsRewriter.fromDirectives(src.definitions(), directives);
     const tgt = V.CommitDatabase.createInMemory();
     tgt.extendDefinitions(targetDefs.const());
     const info = migrateCommitDatabase.migrate(src, transformer, tgt);
-    assert.equal(tgt.commitIds().length, src.commitIds().length);       // history preserved
+    assert.equal([...tgt.commitIds()].length, [...src.commitIds()].length);       // history preserved
     for (const c of commits)
         assert.deepEqual(snapshot(src, c, transformer), snapshot(tgt, info.remap[c.representation()]));
     return { transformer, tgt, info };
@@ -114,7 +134,7 @@ describe('CommitDatabase replay', () => {
         const att = src.definitions().attachments()[0];
         const k1 = att.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
         const k2 = att.createKey(new V.ValueUUId('22222222-2222-2222-2222-222222222222'));
-        const external = V.ValueCommitId.tryParse('a'.repeat(40));
+        const external = /** @type {D.ValueCommitId} */ (V.ValueCommitId.tryParse('a'.repeat(40)));
         const cms0 = new V.CommitMutableState(V.CommitStateBuilder.initialState(src));
         cms0.attachmentMutating().set(att, k1, new V.ValueStructure(ref, { note: 'a', prev: external }));
         const c1 = src.commitMutations('c1', cms0);
@@ -133,14 +153,20 @@ describe('CommitDatabase replay', () => {
         const tatt = tgt.definitions().attachments()[0];
         const d1 = V.ValueStructure.cast(ag.get(tatt, k1).unwrap(false));
         const d2 = V.ValueStructure.cast(ag.get(tatt, k2).unwrap(false));
-        assert.equal(d1.at('prev', false).representation(), external.representation());          // external kept
-        assert.equal(d2.at('prev', false).representation(), remap[c1.representation()].representation());  // remapped
+        assert.equal(/** @type {D.ValueCommitId} */ (d1.at('prev', false)).representation(), external.representation());          // external kept
+        assert.equal(/** @type {D.ValueCommitId} */ (d2.at('prev', false)).representation(), remap[c1.representation()].representation());  // remapped
     });
 });
 
 // Retype-at-path: a Document_Update whose value lands on a retyped field is routed through that
 // field's Class-B policy (widen is automatic; narrow needs one). commutes per commit.
 describe('CommitDatabase replay — retype at path', () => {
+    /**
+     * @param {D.Type} newType
+     * @param {number[]} values
+     * @param {RetypePolicy} policy
+     * @param {D.Type} [srcQty]
+     */
     function runRetype(newType, values, policy, srcQty = T.INT32) {
         const { src, order } = orderDb(srcQty);
         const att = src.definitions().attachments()[0];
@@ -171,7 +197,7 @@ describe('CommitDatabase replay — container verbs', () => {
         const { src, order } = orderDb();
         const att = src.definitions().attachments()[0];
         const k1 = att.createKey(new V.ValueUUId('11111111-1111-1111-1111-111111111111'));
-        const p = (f) => V.Path.fromField(f).const();
+        const p = (/** @type {string} */ f) => V.Path.fromField(f).const();
         const cms0 = new V.CommitMutableState(V.CommitStateBuilder.initialState(src));
         cms0.attachmentMutating().set(att, k1, new V.ValueStructure(
             order, { qty: 1, label: 'a', tags: ['a'], attrs: [['x', 1]] }));
@@ -232,7 +258,7 @@ describe('CommitDatabase run — on disk', () => {
             src.commitMutations('update .qty', cms1);
             src.close();
 
-            const buildDirectives = (_defs) => {
+            const buildDirectives = (/** @type {D.DefinitionsConst} */ _defs) => {
                 const d = new TransformationDirectives();
                 d.renameField('Demo::Order', 'qty', 'count');
                 return d;
@@ -242,9 +268,9 @@ describe('CommitDatabase run — on disk', () => {
             assert.deepEqual(info, { commits: 2, blobs: 0 });      // operator summary, history preserved
 
             const tgt = V.CommitDatabase.open(tgtPath, true);
-            const state = V.CommitStateBuilder.state(tgt, tgt.lastCommitId());
+            const state = V.CommitStateBuilder.state(tgt, /** @type {D.ValueCommitId} */ (tgt.lastCommitId()));
             const tatt = tgt.definitions().attachments()[0];
-            const key = state.attachmentGetting().keys(tatt).at(0, false);
+            const key = /** @type {D.ValueKey} */ (state.attachmentGetting().keys(tatt).at(0, false));
             const doc = V.ValueStructure.cast(state.attachmentGetting().get(tatt, key).unwrap(false));
             assert.equal(doc.at('count', true), 7);                // update carried, field renamed
             tgt.close();

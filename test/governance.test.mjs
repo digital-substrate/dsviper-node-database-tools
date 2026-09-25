@@ -40,7 +40,7 @@ function docstringGovernanceActive() {                         // a docstring ma
 const ID_GOV = identifierGovernanceActive();
 const DOC_GOV = docstringGovernanceActive();
 
-const renameTo = (name) => {
+const renameTo = (/** @type {string} */ name) => {
     const d = new TransformationDirectives();
     d.renameField('Demo::Order', 'amount', name);
     DefinitionsRewriter.fromDirectives(srcOrder(), d);
@@ -62,7 +62,7 @@ describe('identifier governance fails closed', () => {
 });
 
 describe('docstring governance fails closed', () => {
-    const documentTo = (doc) => {
+    const documentTo = (/** @type {string} */ doc) => {
         const d = new TransformationDirectives();
         d.documentField('Demo::Order', 'amount', doc);
         DefinitionsRewriter.fromDirectives(srcOrder(), d);
