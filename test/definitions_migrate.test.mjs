@@ -7,9 +7,9 @@
 // defaults included), so an equal digest proves the patch faithful — that comparison is the
 // assertion these tests rest on (definitionsMigrate raises on mismatch).
 //
-// The tool needs the parser's DSMSourceMap by-product (dsviper >= 1.2.6), which is newer than the
-// shipped floor. The whole suite live-probes the installed binding and skips cleanly where the
-// source-map surface is absent, so it documents the contract without breaking on an older peer.
+// The tool needs the parser's DSMSourceMap by-product (dsviper >= 1.2.6), and the spans it edits at
+// are exact from dsviper >= 1.2.13, the shipped floor. The whole suite still live-probes the
+// installed binding and skips cleanly where the source-map surface is absent.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -156,6 +156,19 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         });
         assert.ok(out['shop.dsm'].includes('uint64 quantity;'));
         assert.ok(!out['shop.dsm'].includes('= 1'));
+    });
+
+    it('retype keeps the doc comment of the field', () => {
+        // The field's type span once started at its doc comment, so the retype rewrote the
+        // comment away with the type. The comment belongs to the field, not to its type.
+        const shop = SHOP.replace('    uint16 legacy_code;',
+            '    """The code of the previous system."""\n    uint16 legacy_code;');
+        const out = run({ 'shop.dsm': shop, 'catalog.dsm': CATALOG }, () => {
+            const d = new TransformationDirectives();
+            d.retypeField('Shop::Order', 'legacy_code', V.Type.UINT32);
+            return d;
+        });
+        assert.ok(out['shop.dsm'].includes('    """The code of the previous system."""\n    uint32 legacy_code;'));
     });
 
     it('resize vec field', () => {
@@ -530,6 +543,30 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
         assert.ok(body.includes('N::B a;'));                     // named -> fully qualified
         assert.ok(body.includes('vector<N::B> many;'));
         assert.ok(!body.includes('struct A {'));                 // the engine drops the transformed decl
+    });
+
+    it('transform type rewrites a key expression whole', () => {
+        // The span of a `key<X>` occurrence once started at the concept name, so a transform of
+        // the key type rewrote `Customer>` and left `key<` in front of the replacement.
+        const model = 'namespace N {22222222-2222-2222-2222-222222222222} {\n\n'
+            + 'concept Customer;\n'
+            + 'concept Vendor;\n\n'
+            + 'struct Order {\n'
+            + '    key<Customer> buyer;\n'
+            + '    vector<key<Customer>> referrals;\n'
+            + '};\n\n'
+            + '};\n';
+        const out = run({ 'model.dsm': model }, (defs) => {
+            const customer = /** @type {D.TypeConcept} */ (defs.concepts().find((c) => c.representation() === 'N::Customer'));
+            const vendor = /** @type {D.TypeConcept} */ (defs.concepts().find((c) => c.representation() === 'N::Vendor'));
+            const d = new TransformationDirectives();
+            d.transformType(new V.TypeKey(customer), new V.TypeKey(vendor), (v) => v);
+            return d;
+        });
+        const body = out['model.dsm'];
+        assert.ok(body.includes('key<N::Vendor> buyer;'));
+        assert.ok(body.includes('vector<key<N::Vendor>> referrals;'));
+        assert.ok(!body.includes('key<key<'));
     });
 
     it('dropped type still named by a pool is refused up front', () => {

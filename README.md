@@ -54,7 +54,7 @@ The runtime `@digitalsubstrate/dsviper` is on npm; this tool is not (yet). Insta
 clone this repo, and run the script from the repo — the same shape as `dsviper-tools`:
 
 ```bash
-npm install "@digitalsubstrate/dsviper@>=1.2.8 <2"
+npm install "@digitalsubstrate/dsviper@>=1.2.13 <2"
 git clone <repo> dsviper-node-database-tools
 cd dsviper-node-database-tools
 node bin/database_migrate.mjs <migration> <source> <target>
@@ -245,7 +245,7 @@ faithfully (history preserved, merges included) over the 10 opcode verbs, in one
 that rolls back on failure, and verifies itself *opcode by opcode* plus the DAG topology. The port
 also drove additive binding fixes, found by exercising the `encoded=false` typed-value path.
 
-Requires `@digitalsubstrate/dsviper` >= 1.2.5.
+Requires `@digitalsubstrate/dsviper` >= 1.2.13.
 
 ## Runtime dependency
 

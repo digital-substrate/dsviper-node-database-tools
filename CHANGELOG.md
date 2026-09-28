@@ -9,6 +9,11 @@
 
 ### Changed
 
+- **Requires `@digitalsubstrate/dsviper` >= 1.2.13,** the release whose declarations the
+  package is typed against, and the first to return id sets as `ValueSet`. Two source-map spans
+  were wrong before it: a documented field's type span started at its doc comment, so a
+  `retypeField` deleted the comment, and a `key<X>` occurrence's span started at the concept
+  name, so `transformType` rewrote `Customer>` and left `key<` in front. Two tests now hold both.
 - **Typed against the binding's declarations.** `npm run typecheck` runs TypeScript over the
   package's `.mjs` through JSDoc; no call into the binding is made on an untyped receiver.
 

@@ -31,7 +31,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
-    "@digitalsubstrate/dsviper": ">=1.2.8 <2"
+    "@digitalsubstrate/dsviper": ">=1.2.13 <2"
   },
   "keywords": [
     "dsviper",
