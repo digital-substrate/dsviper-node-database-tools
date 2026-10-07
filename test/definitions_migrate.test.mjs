@@ -102,6 +102,17 @@ function run(files, fn) {
     return patched;
 }
 
+// Whether the binding gives source offsets in UTF-16 units, a JS string's index (node 1.2.15).
+const UTF16 = SM && (() => {
+    const content = 'namespace A {00000000-0000-0000-0000-0000000000a1} {\n"""\u{1F600}"""\nconcept C;\n};\n';
+    const builder = new V.DSMBuilder();
+    builder.append('t', content);
+    const sourceMap = new V.DSMSourceMap();
+    builder.parse(sourceMap);
+    const span = sourceMap.declarations()[0].nameSpan();
+    return span !== null && content.slice(span.start(), span.stop() + 1) === 'C';
+})();
+
 describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (parser source-map surface)' }, () => {
     // -- renames (family 1) -------------------------------------------------------------
 
@@ -122,6 +133,19 @@ describe('definitions_migrate', { skip: !SM && 'binding has no DSMSourceMap (par
             return d;
         });
         assert.ok(out['shop.dsm'].includes('uint32 qty = 1;'));   // the default rides the rename
+    });
+
+    it('a rename past a character above U+FFFF lands on the name', { skip: !UTF16 && 'binding counts source offsets in code points (before node 1.2.15)' }, () => {
+        // A JS string indexes UTF-16 units: a documentation with an emoji before the field
+        // must not shift the edit.
+        const shop = 'namespace Shop {00000000-0000-0000-0000-0000000000a1} {\n\n"""A customer \u{1F600}."""\n' +
+            'struct Customer {\n  string fullname;\n};\n\n};\n';
+        const out = run({ 'shop.dsm': shop }, () => {
+            const d = new TransformationDirectives();
+            d.renameField('Shop::Customer', 'fullname', 'full_name');
+            return d;
+        });
+        assert.ok(out['shop.dsm'].includes('  string full_name;'));
     });
 
     it('rename case', () => {
