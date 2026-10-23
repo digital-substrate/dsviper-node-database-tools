@@ -178,12 +178,12 @@ function updateValue(rewriter, op, tgtAtt, path, terminal) {
 }
 
 // Re-issue one opcode (all verbs except XArray_Insert, which is paired) onto the target
-// AttachmentMutating, transformed. Each verb that ADDS a value streams its referenced blobs into
+// CommitAttachmentMutating, transformed. Each verb that ADDS a value streams its referenced blobs into
 // the target first (ensureBlobs) — a document cannot be persisted referencing an absent blob.
 /**
  * Re-issue one source opcode (any verb but the paired XArray_Insert) onto the target, transformed.
  * @param {Opcode} op the source opcode
- * @param {D.AttachmentMutating} am the target state's mutating interface
+ * @param {D.CommitAttachmentMutating} am the target state's mutating interface
  * @param {Rewriter} rewriter the rewriter built from the migration's directives
  * @param {D.DefinitionsConst} sourceDefs the source definitions (to decode the opcode's arguments)
  * @param {(value: D.Value) => void} ensureBlobs streams the blobs a value references into the target
@@ -244,7 +244,7 @@ function addressesDroppedAttachment(op, sourceDefs, dropped) {
 // attachment are skipped (the insert PAIR together).
 /**
  * @param {Opcode[]} ops
- * @param {D.AttachmentMutating} am
+ * @param {D.CommitAttachmentMutating} am
  * @param {Rewriter} rewriter
  * @param {D.DefinitionsConst} sourceDefs
  * @param {(value: D.Value) => void} ensureBlobs

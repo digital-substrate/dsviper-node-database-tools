@@ -134,7 +134,7 @@ referenced blobs.
 **The CommitDatabase loop is the same atom in a loop over opcodes.** A `CommitDatabase` stores not
 documents but the *mutations* that produce them — opcodes in a DAG. And **an opcode is a little
 document**: `(attachment, key, semantics, path, value)`. Rewriting one is the same engine call on
-its operand, plus a path translation and a key/attachment remap — indeed `AttachmentMutating.set`
+its operand, plus a path translation and a key/attachment remap — indeed `CommitAttachmentMutating.set`
 *is* `Database.set`, so a `Document_Set` opcode is literally the Database loop's unit.
 `migrateCommitDatabase.migrate` re-issues every opcode in topological order (`CommitData.sort`),
 threading an old→new commit-id map. So its correctness **reduces** to "the engine is correct" +
@@ -197,7 +197,7 @@ altered an in-range value would be a bug.
 
 **4 · An opcode is a little document.** In `migrate_commit_database.mjs`, an opcode
 `(attachment, key, semantics, path, value)` is rewritten by the same engine call on its operand
-plus a path/key/attachment remap — `AttachmentMutating.set` *is* `Database.set`. Keep it true: a
+plus a path/key/attachment remap — `CommitAttachmentMutating.set` *is* `Database.set`. Keep it true: a
 new opcode verb is handled by rewriting its operand through `value` / `_retype`, never by a bespoke
 conversion.
 

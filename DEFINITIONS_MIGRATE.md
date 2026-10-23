@@ -273,7 +273,7 @@ every primitive — are skipped, so the pass costs nothing on a small edit. This
 carries a rename into a **function-pool signature**, which the digest cannot check but the re-parse
 can (§3). DSM declares two kinds of pool and this pass covers both: `function_pool` (stateless) and
 `attachment_function_pool` (stateful — the name is a code-generation contract, meaning the generated
-function takes `AttachmentGetting`, or `AttachmentMutating` under `mutable`, as an implicit first
+function takes `AttachmentGetting`, or `CommitAttachmentMutating` under `mutable`, as an implicit first
 parameter; it binds no persistence attachment, so no attachment directive reaches a pool). Neither
 the pool header nor `mutable` is ever edited, so a migration cannot alter that contract.
 
