@@ -24,15 +24,15 @@ export { VerificationError };
 
 /**
  * An opcode as `CommitData.opcodes()` yields it: one of the concrete verbs, told apart by `type()`.
- * @typedef {D.ValueOpcodeDocumentSet | D.ValueOpcodeDocumentUpdate | D.ValueOpcodeSetUnion
- *     | D.ValueOpcodeSetSubtract | D.ValueOpcodeMapUnion | D.ValueOpcodeMapSubtract
- *     | D.ValueOpcodeMapUpdate | D.ValueOpcodeXArrayRemove | D.ValueOpcodeXArrayInsert
- *     | D.ValueOpcodeXArrayUpdate} Opcode
+ * @typedef {D.CommitOpcodeDocumentSet | D.CommitOpcodeDocumentUpdate | D.CommitOpcodeSetUnion
+ *     | D.CommitOpcodeSetSubtract | D.CommitOpcodeMapUnion | D.CommitOpcodeMapSubtract
+ *     | D.CommitOpcodeMapUpdate | D.CommitOpcodeXArrayRemove | D.CommitOpcodeXArrayInsert
+ *     | D.CommitOpcodeXArrayUpdate} Opcode
  */
 
-/** @typedef {Exclude<Opcode, D.ValueOpcodeDocumentSet>} PathOpcode an opcode addressing a path in the document */
+/** @typedef {Exclude<Opcode, D.CommitOpcodeDocumentSet>} PathOpcode an opcode addressing a path in the document */
 
-/** @typedef {Exclude<Opcode, D.ValueOpcodeXArrayInsert | D.ValueOpcodeXArrayRemove>} ValuedOpcode an opcode carrying a value */
+/** @typedef {Exclude<Opcode, D.CommitOpcodeXArrayInsert | D.CommitOpcodeXArrayRemove>} ValuedOpcode an opcode carrying a value */
 
 /** @typedef {[string, string]} Terminal the [struct repr, field] a path ends on */
 
@@ -166,7 +166,7 @@ export function translatePath(rewriter, sourceDocType, sourcePath) {
 // terminal field's retype policy (Class B), else to the path type.
 /**
  * @param {Rewriter} rewriter
- * @param {D.ValueOpcodeDocumentUpdate} op
+ * @param {D.CommitOpcodeDocumentUpdate} op
  * @param {D.Attachment} tgtAtt
  * @param {D.PathConst} path
  * @param {Terminal | null} terminal
@@ -198,34 +198,34 @@ export function translateOpcode(op, am, rewriter, sourceDefs, ensureBlobs) {
     const kind = op.type();
 
     if (kind === 'Document_Set') {
-        const v = rewriter.value(/** @type {D.ValueOpcodeDocumentSet} */ (op).value()); ensureBlobs(v);
+        const v = rewriter.value(/** @type {D.CommitOpcodeDocumentSet} */ (op).value()); ensureBlobs(v);
         am.set(tgtAtt, tgtKey, v);
         return;
     }
     const [path, terminal] = translatePath(rewriter, att.documentType(), /** @type {PathOpcode} */ (op).path());
 
     if (kind === 'Document_Update') {
-        const v = updateValue(rewriter, /** @type {D.ValueOpcodeDocumentUpdate} */ (op), tgtAtt, path, terminal); ensureBlobs(v);
+        const v = updateValue(rewriter, /** @type {D.CommitOpcodeDocumentUpdate} */ (op), tgtAtt, path, terminal); ensureBlobs(v);
         am.update(tgtAtt, tgtKey, path, v);
     } else if (kind === 'Set_Union') {
-        const v = rewriter.value(/** @type {D.ValueOpcodeSetUnion} */ (op).value()); ensureBlobs(v);
+        const v = rewriter.value(/** @type {D.CommitOpcodeSetUnion} */ (op).value()); ensureBlobs(v);
         am.unionInSet(tgtAtt, tgtKey, path, v);
     } else if (kind === 'Set_Subtract') {
-        am.subtractInSet(tgtAtt, tgtKey, path, rewriter.value(/** @type {D.ValueOpcodeSetSubtract} */ (op).value()));   // removal, no blob added
+        am.subtractInSet(tgtAtt, tgtKey, path, rewriter.value(/** @type {D.CommitOpcodeSetSubtract} */ (op).value()));   // removal, no blob added
     } else if (kind === 'Map_Union') {
-        const v = rewriter.value(/** @type {D.ValueOpcodeMapUnion} */ (op).value()); ensureBlobs(v);
+        const v = rewriter.value(/** @type {D.CommitOpcodeMapUnion} */ (op).value()); ensureBlobs(v);
         am.unionInMap(tgtAtt, tgtKey, path, v);
     } else if (kind === 'Map_Update') {
-        const v = rewriter.value(/** @type {D.ValueOpcodeMapUpdate} */ (op).value()); ensureBlobs(v);
+        const v = rewriter.value(/** @type {D.CommitOpcodeMapUpdate} */ (op).value()); ensureBlobs(v);
         am.updateInMap(tgtAtt, tgtKey, path, v);
     } else if (kind === 'Map_Subtract') {
-        am.subtractInMap(tgtAtt, tgtKey, path, rewriter.value(/** @type {D.ValueOpcodeMapSubtract} */ (op).value()));   // value = set of keys
+        am.subtractInMap(tgtAtt, tgtKey, path, rewriter.value(/** @type {D.CommitOpcodeMapSubtract} */ (op).value()));   // value = set of keys
     } else if (kind === 'XArray_Update') {
-        const xop = /** @type {D.ValueOpcodeXArrayUpdate} */ (op);
+        const xop = /** @type {D.CommitOpcodeXArrayUpdate} */ (op);
         const v = rewriter.value(xop.value()); ensureBlobs(v);
         am.updateInXarray(tgtAtt, tgtKey, path, xop.position(), v);
     } else if (kind === 'XArray_Remove') {
-        am.removeInXarray(tgtAtt, tgtKey, path, /** @type {D.ValueOpcodeXArrayRemove} */ (op).position());
+        am.removeInXarray(tgtAtt, tgtKey, path, /** @type {D.CommitOpcodeXArrayRemove} */ (op).position());
     } else {
         throw new Error(`opcode '${kind}' not handled`);
     }
@@ -260,8 +260,8 @@ function replayOpcodes(ops, am, rewriter, sourceDefs, ensureBlobs) {
             continue;
         }
         if (isInsert) {
-            const iop = /** @type {D.ValueOpcodeXArrayInsert} */ (op);
-            const nxt = /** @type {D.ValueOpcodeXArrayUpdate} */ (ops[i + 1]);   // the paired XArray_Update
+            const iop = /** @type {D.CommitOpcodeXArrayInsert} */ (op);
+            const nxt = /** @type {D.CommitOpcodeXArrayUpdate} */ (ops[i + 1]);   // the paired XArray_Update
             const args = iop.arguments(sourceDefs);
             const att = args[0]; const key = args[1];
             rewriter._selfKey = key;                   // record identity for aggregate hooks
@@ -397,7 +397,7 @@ function rewrittenOpcodeValue(op, rewriter, tgtAtt, path, terminal) {
     if (kind === 'XArray_Insert' || kind === 'XArray_Remove') return null;
     if (kind === 'Document_Update') {
         if (path === null) throw new Error('a Document_Update opcode carries a path');
-        return updateValue(rewriter, /** @type {D.ValueOpcodeDocumentUpdate} */ (op), tgtAtt, path, terminal);
+        return updateValue(rewriter, /** @type {D.CommitOpcodeDocumentUpdate} */ (op), tgtAtt, path, terminal);
     }
     return rewriter.value(/** @type {ValuedOpcode} */ (op).value());
 }
@@ -566,7 +566,7 @@ export function dryRun(source, rewriter, { maxSamples = 5 } = {}) {
                 try {
                     let v;
                     if (kind === 'Document_Set') {
-                        v = rewriter.value(/** @type {D.ValueOpcodeDocumentSet} */ (op).value());
+                        v = rewriter.value(/** @type {D.CommitOpcodeDocumentSet} */ (op).value());
                     } else {
                         const [path, terminal] = translatePath(rewriter, att.documentType(), /** @type {PathOpcode} */ (op).path());
                         v = rewrittenOpcodeValue(op, rewriter, tgtAtt, path, terminal);
