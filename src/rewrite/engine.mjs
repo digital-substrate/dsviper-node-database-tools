@@ -892,14 +892,12 @@ export class DefinitionsRewriter {
         const sc = smt.columns(); const sr = smt.rows();
         const tmt = V.TypeMat.cast(tt); const tc = tmt.columns(); const tr = tmt.rows();
         if (sc > tc || sr > tr) this._shrinkLoss(onShrink, site, `${sc}×${sr}`, `${tc}×${tr}`);
-        const out = new V.ValueMat(/** @type {D.TypeMat} */ (tt));   // inits to IDENTITY
-        for (let c = 0; c < Math.min(sc, tc); c++)                   // preserve the source block; new
-            for (let r = 0; r < Math.min(sr, tr); r++) out.set(c, r, /** @type {D.NumericOutputValue} */ (svm.at(c, r, true)));   // cells keep identity
-        if (fill !== 'identity') {                                   // 'zero' / scalar: overwrite the
-            const fv = fill === 'zero' ? 0 : /** @type {D.NumericOutputValue} */ (nativeOf(fill));   // cells outside the source block
-            for (let c = 0; c < tc; c++)
-                for (let r = 0; r < tr; r++) if (c >= sc || r >= sr) out.set(c, r, fv);
-        }
+        const out = new V.ValueMat(/** @type {D.TypeMat} */ (tt));   // zeros from 1.2.30, the identity
+        for (let c = 0; c < Math.min(sc, tc); c++)                   // before: every new cell is set
+            for (let r = 0; r < Math.min(sr, tr); r++) out.set(c, r, /** @type {D.NumericOutputValue} */ (svm.at(c, r, true)));   // preserve the source block
+        const fv = fill === 'identity' || fill === 'zero' ? 0 : /** @type {D.NumericOutputValue} */ (nativeOf(fill));
+        for (let c = 0; c < tc; c++)                                 // the cells outside the block
+            for (let r = 0; r < tr; r++) if (c >= sc || r >= sr) out.set(c, r, fill === 'identity' && c === r ? 1 : fv);
         return out;
     }
 

@@ -4,16 +4,21 @@
 
 ### Fixed
 
+- **`resizeMatField` with `fill: 'identity'` extends the diagonal again.** It relied on a new
+  mat starting as the identity, which the 1.2.30 runtime (binding 1.2.16) changed to zeros: the
+  grown diagonal came out 0. The fill is now written cell by cell, so either runtime gives the
+  same matrix.
 - **Migration read commit ids as an array.** A binding returning them as `ValueSet` made the progress
   bar and the commit-count check read `undefined`; they are spread first, which works with either.
 
 ### Changed
 
-- **Requires `@digitalsubstrate/dsviper` >= 1.2.13,** the release whose declarations the
-  package is typed against, and the first to return id sets as `ValueSet`. Two source-map spans
-  were wrong before it: a documented field's type span started at its doc comment, so a
-  `retypeField` deleted the comment, and a `key<X>` occurrence's span started at the concept
-  name, so `transformType` rewrote `Customer>` and left `key<` in front. Two tests now hold both.
+- **Requires `@digitalsubstrate/dsviper` >= 1.2.16,** the release whose declarations the
+  package is typed against — the first to name the Commit opcodes `CommitOpcode*`. Since 1.2.13
+  the binding returns id sets as `ValueSet`, and before it two source-map spans were wrong: a
+  documented field's type span started at its doc comment, so a `retypeField` deleted the
+  comment, and a `key<X>` occurrence's span started at the concept name, so `transformType`
+  rewrote `Customer>` and left `key<` in front. Two tests now hold both.
 - **Typed against the binding's declarations.** `npm run typecheck` runs TypeScript over the
   package's `.mjs` through JSDoc; no call into the binding is made on an untyped receiver.
 
