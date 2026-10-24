@@ -288,7 +288,7 @@ export class TransformationDirectives {
      * @param {{ fill?: 'identity' | 'zero' | FillScalar, onShrink?: ShrinkPolicy }} [options]
      */
     resizeMatField(structRepr, field, columns, rows, { fill = 'identity', onShrink = 'fail' } = {}) {
-        // fill: 'identity' (born-default: extend the diagonal with 1) | 'zero' | a numeric
+        // fill: 'identity' (extend the diagonal with 1, the rest 0) | 'zero' | a numeric
         //       scalar. onShrink: 'fail' | 'accept' (accept the dropped rows/columns).
         (this.resizedFields[structRepr] ??= Object.create(null))[field] = ['mat', [columns, rows], fill, onShrink];
     }

@@ -66,6 +66,7 @@ function renameQty(order) {
     return d;
 }
 
+/** @param {D.Type} [qtyType] */
 function orderDb(qtyType = T.INT32) {
     const src = V.CommitDatabase.createInMemory();
     const defs = new V.Definitions();
@@ -256,6 +257,11 @@ describe('CommitDatabase drop-record refused', () => {
 // -- dry_run — the inform step: preview policy bites + would-abort record-scoped losses --------
 
 describe('CommitDatabase dryRun', () => {
+    /**
+     * @param {D.Type} [qtyType]
+     * @param {number} [first]
+     * @param {number} [second]
+     */
     function linear(qtyType = T.INT32, first = 5, second = 7) {
         const { src, order } = orderDb(qtyType);
         const att = src.definitions().attachments()[0];
